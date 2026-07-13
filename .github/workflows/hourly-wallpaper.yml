@@ -34,7 +34,7 @@ jobs:
       - run: pip install .
       - run: earthwall --cache cache --output public
       - run: earthwall-qa public | tee public/qa.json
-      - run: cp web/index.html public/index.html
+      - run: cp web/* public/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -42,4 +42,3 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

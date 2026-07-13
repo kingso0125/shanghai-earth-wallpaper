@@ -4,6 +4,8 @@
 
 在线预览：<https://kingso0125.github.io/shanghai-earth-wallpaper/>
 
+iPhone 快捷指令安装文件由 `shortcuts/更新上海实时地球.plist` 生成，显式区分 Lock/Home 目标；在 macOS 上运行 `scripts/build-shortcut.sh` 可重新签名并写入 `web/`。
+
 ## 本地生成
 
 ```bash
