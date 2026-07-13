@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .config import HOME, LOCK, RenderPreset
+from .config import RenderPreset, presets_for_location
 from .geometry import camera_grid
 from .lighting import daylight
 
@@ -43,13 +43,21 @@ def audit(directory: Path) -> dict:
     observation = datetime.fromisoformat(manifest["observation_utc"].replace("Z", "+00:00"))
     rendered = datetime.fromisoformat(manifest["rendered_utc"].replace("Z", "+00:00"))
     age_hours = (rendered.astimezone(UTC) - observation.astimezone(UTC)).total_seconds() / 3600
+    target = manifest.get("target", {})
+    lock, home = presets_for_location(
+        float(target.get("latitude", 31.2304)),
+        float(target.get("longitude", 121.4737)),
+    )
     result = {
         "observation_age_hours": age_hours,
-        "lock": _metrics(directory / "lock.jpg", LOCK, observation),
-        "home": _metrics(directory / "home.jpg", HOME, observation),
+        "lock": _metrics(directory / "lock.jpg", lock, observation),
+        "home": _metrics(directory / "home.jpg", home, observation),
     }
     failures = []
-    if "CIRA SLIDER" in manifest["source"] and manifest.get("render_mode") != "fused_geostationary_plate_shanghai_meridian":
+    if "CIRA SLIDER" in manifest["source"] and manifest.get("render_mode") not in {
+        "fused_geostationary_plate_shanghai_meridian",
+        "fused_geostationary_plate_location_meridian",
+    }:
         failures.append("CIRA observation was not transformed as one fused Earth/cloud plate")
     if manifest["source_status"] == "fresh" and not 0 <= age_hours <= 3.0:
         failures.append(f"fresh observation age is {age_hours:.2f} hours")

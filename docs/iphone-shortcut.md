@@ -18,6 +18,20 @@
 
 固定图片地址的 CDN 缓存约 10 分钟。主任务漏跑时，独立 watchdog 也会尽量在 `:26` 左右完成发布，使手机在每小时 `:45` 运行前仍有约 19 分钟用于缓存失效。
 
+## 位置自适应版本
+
+启用后，每次运行先执行“获取当前位置”，将纬度、经度、定位精度和城市名通过 HTTPS POST 到 `https://2026.mtomorrow.com/earthwall/api/location`。请求使用设备私有 Bearer Token；Token 不写入公开仓库和安装页。
+
+- 新位置距离当前中心不超过 80 公里：不改变视角，直接换图。
+- 超过 80 公里：服务器保存新位置、立即重新生成，再返回结果。
+- 定位失败或精度差于 20 公里：保留上次位置。
+- 服务只保存一条最新位置，不记录历史轨迹。
+
+位置自适应图片地址不经过 GitHub CDN：
+
+- Lock：`https://2026.mtomorrow.com/earthwall/lock.jpg`
+- Home：`https://2026.mtomorrow.com/earthwall/home.jpg`
+
 ## 每小时自动运行
 
 iOS 没有“每小时”循环开关，因此需要 24 个每天触发一次的时间点。

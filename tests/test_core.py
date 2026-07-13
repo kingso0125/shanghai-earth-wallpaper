@@ -3,9 +3,10 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from earthwall.config import HOME, LOCK, SHANGHAI
+from earthwall.config import HOME, LOCK, SHANGHAI, presets_for_location
 from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
+from earthwall.location import Location, LocationStore, haversine_km
 from earthwall.render import _blend_city_lights, _grade_geocolor, _night_cloud_alpha
 from earthwall.sources import latest_common_time
 
@@ -23,6 +24,32 @@ class CoreTests(unittest.TestCase):
         self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), 0.0, places=2)
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), SHANGHAI[1], places=2)
         self.assertFalse(bool(visible[0, 0]))
+
+    def test_camera_can_follow_guangzhou_meridian(self):
+        guangzhou = presets_for_location(23.1291, 113.2644)[0]
+        lat, lon, _, _, _ = camera_grid(guangzhou)
+        x, y = map(int, guangzhou.center_px)
+        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), 0.0, places=2)
+        self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), 113.2644, places=2)
+
+    def test_location_store_requires_more_than_80_km(self):
+        import tempfile
+        from pathlib import Path
+
+        shanghai = Location(31.2304, 121.4737, "Shanghai")
+        nearby = Location(31.2100, 121.1000, "Nearby")
+        guangzhou = Location(23.1291, 113.2644, "Guangzhou")
+        self.assertLess(haversine_km(shanghai, nearby), 80.0)
+        self.assertGreater(haversine_km(shanghai, guangzhou), 80.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = LocationStore(Path(directory) / "location.json", threshold_km=80.0)
+            current, _, changed = store.update(nearby)
+            self.assertFalse(changed)
+            self.assertEqual(current.name, "Shanghai")
+            current, _, changed = store.update(guangzhou)
+            self.assertTrue(changed)
+            self.assertEqual(current.name, "Guangzhou")
 
     def test_daylight_is_bounded(self):
         _, _, _, _, vectors = camera_grid(LOCK)

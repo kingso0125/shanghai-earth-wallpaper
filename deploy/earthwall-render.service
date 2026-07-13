@@ -1,0 +1,16 @@
+[Unit]
+Description=Publish current location-aware Earth wallpapers
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=earthwall
+Group=earthwall
+WorkingDirectory=/opt/earthwall/repo
+ExecStart=/opt/earthwall/venv/bin/earthwall-location-api --publish-once
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/earthwall /var/cache/earthwall /srv/earthwall

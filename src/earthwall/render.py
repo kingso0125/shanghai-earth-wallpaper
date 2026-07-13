@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-from .config import PRESETS, RenderPreset
+from .config import SHANGHAI, RenderPreset, presets_for_location
 from .geometry import camera_grid, sample_equirectangular, sample_geostationary_focus_plate
 from .lighting import daylight, sun_vector
 from .sources import Observation, sha256
@@ -194,10 +194,17 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
     Image.fromarray(np.uint8(output * 255), "RGB").save(destination, quality=96)
 
 
-def render_pair(observation: Observation, output: Path) -> dict:
+def render_pair(
+    observation: Observation,
+    output: Path,
+    target_latitude: float = SHANGHAI[0],
+    target_longitude: float = SHANGHAI[1],
+    target_name: str = "Shanghai",
+) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     artifacts = {}
-    for preset in PRESETS:
+    presets = presets_for_location(target_latitude, target_longitude)
+    for preset in presets:
         path = output / f"{preset.name}.jpg"
         render_one(observation, preset, path)
         artifacts[preset.name] = {"file": path.name, "sha256": sha256(path), "size": preset.size}
@@ -209,15 +216,19 @@ def render_pair(observation: Observation, output: Path) -> dict:
         "source": observation.source,
         "source_status": observation.status,
         "render_mode": (
-            "fused_geostationary_plate_shanghai_meridian"
+            "fused_geostationary_plate_location_meridian"
             if observation.geocolor is not None
             else "equirectangular_cloud_fallback"
         ),
         "observation_asset_sha256": sha256(
             observation.geocolor or observation.visible
         ),
-        "target": {"name": "Shanghai", "latitude": 31.2304, "longitude": 121.4737},
-        "view_center": {"latitude": 0.0, "longitude": 121.4737},
+        "target": {
+            "name": target_name,
+            "latitude": target_latitude,
+            "longitude": target_longitude,
+        },
+        "view_center": {"latitude": 0.0, "longitude": target_longitude},
         "sun_vector": [round(float(value), 7) for value in sun],
         "acknowledgement": ACKNOWLEDGEMENT,
         "night_lights": {

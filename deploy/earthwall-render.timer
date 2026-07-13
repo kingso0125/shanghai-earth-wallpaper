@@ -1,0 +1,11 @@
+[Unit]
+Description=Render location-aware Earth wallpapers every hour
+
+[Timer]
+OnCalendar=*-*-* *:17:00
+Persistent=true
+RandomizedDelaySec=0
+Unit=earthwall-render.service
+
+[Install]
+WantedBy=timers.target

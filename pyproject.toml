@@ -12,6 +12,7 @@ dependencies = ["numpy>=2.0", "Pillow>=11.0"]
 [project.scripts]
 earthwall = "earthwall.cli:main"
 earthwall-qa = "earthwall.qa:main"
+earthwall-location-api = "earthwall.location_api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

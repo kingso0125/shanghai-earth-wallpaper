@@ -1,6 +1,6 @@
 # 实时地球壁纸
 
-每小时生成一组参考 Apple Astronomy Earth 质感的 iPhone Lock/Home 壁纸。主路径优先使用韩国 GK2A 原生全圆盘 GeoColor；镜头沿上海经线 121.4737°E 对准赤道，使上海位于画面水平中心、地球上半部，与 Apple 参考构图一致，同时保持云层和地表为同一张卫星观测。
+每小时生成一组参考 Apple Astronomy Earth 质感的 iPhone Lock/Home 壁纸。主路径优先使用韩国 GK2A 原生全圆盘 GeoColor；默认镜头沿上海经线 121.4737°E 对准赤道，启用手机定位后则沿当前位置经线构图，同时保持云层和地表为同一张卫星观测。
 
 在线预览：<https://kingso0125.github.io/shanghai-earth-wallpaper/>
 
@@ -31,6 +31,12 @@ earthwall-qa output/current
 `.github/workflows/daily-storage-cleanup.yml` 每天上海时间 01:30 删除前一天的 Earth fallback caches 与构建 artifacts；始终保留最新一份卫星缓存，Pages artifacts 另有 1 天自动过期保护。
 
 iPhone 端配置见 [docs/iphone-shortcut.md](docs/iphone-shortcut.md)。
+
+## 位置自适应
+
+阿里云 HTTPS 接口接收快捷指令单次运行时取得的经纬度，不持续追踪手机。新位置与当前中心距离**超过 80 公里**才更新并立即生成；80 公里以内沿用原构图，避免 GPS 漂移。服务只保存最新位置，不保存轨迹，定位无效时继续使用上次位置；首次部署的默认位置仍为上海。
+
+动态壁纸由 `https://2026.mtomorrow.com/earthwall/lock.jpg` 与 `home.jpg` 提供，并返回 `Cache-Control: no-store`，避免 GitHub Pages 固定 URL 的十分钟缓存。阿里云上的 `earthwall-render.timer` 同样在每小时 `:17` 生成，Mac 无需开机。
 
 ## 数据降级
 
