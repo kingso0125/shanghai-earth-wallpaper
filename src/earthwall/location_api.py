@@ -110,7 +110,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--state", type=Path, default=Path("/var/lib/earthwall/location.json"))
     result.add_argument("--root", type=Path, default=Path("/srv/earthwall"))
     result.add_argument("--cache", type=Path, default=Path("/var/cache/earthwall"))
-    result.add_argument("--lock", type=Path, default=Path("/run/earthwall/render.lock"))
+    result.add_argument("--lock", type=Path, default=Path("/var/lib/earthwall/render.lock"))
     result.add_argument("--token-file", type=Path, default=Path("/etc/earthwall/location-token"))
     result.add_argument("--threshold-km", type=float, default=80.0)
     result.add_argument("--publish-once", action="store_true")
