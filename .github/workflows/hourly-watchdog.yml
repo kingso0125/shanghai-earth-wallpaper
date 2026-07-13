@@ -5,7 +5,7 @@ on:
     branches:
       - scheduler
   schedule:
-    - cron: "35 * * * *"
+    - cron: "28 * * * *"
   workflow_dispatch:
     inputs:
       force_recovery:

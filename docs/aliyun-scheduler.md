@@ -1,6 +1,6 @@
 # 阿里云独立调度器
 
-阿里云服务器作为 GitHub 原生 cron 之外的独立时钟。每小时 `:33`，服务器向仓库专用 `scheduler` 分支强制推送一个基于最新 `main` 的空心跳提交。`.github/workflows/hourly-watchdog.yml` 监听该分支的 push：
+阿里云服务器作为 GitHub 原生 cron 之外的独立时钟。每小时 `:25`，服务器向仓库专用 `scheduler` 分支强制推送一个基于最新 `main` 的空心跳提交。`.github/workflows/hourly-watchdog.yml` 监听该分支的 push：
 
 - GitHub 主任务 `:17` 已成功时，watchdog 判定壁纸新鲜并结束。
 - 主任务漏跑时，watchdog 会在 iPhone `:45` 换图前重新渲染、QA 并发布。
@@ -15,6 +15,6 @@ GitHub `github-pages` Environment 的 deployment branch policy 只允许 `main` 
 ## 服务器文件
 
 - `/usr/local/sbin/shanghai-earth-wallpaper-trigger`：受版本控制的心跳脚本。
-- `/etc/cron.d/shanghai-earth-wallpaper`：每小时 `:33` 运行，使用 `flock` 防止重入。
+- `/etc/cron.d/shanghai-earth-wallpaper`：每小时 `:25` 运行，使用 `flock` 防止重入。
 - `/var/log/shanghai-earth-wallpaper-trigger.log`：心跳结果。
 - `/etc/logrotate.d/shanghai-earth-wallpaper`：每日轮转，保留 7 份并压缩。

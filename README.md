@@ -24,9 +24,9 @@ earthwall-qa output/current
 
 ## 每小时运行
 
-本机可执行 `scripts/hourly.sh`。云端使用 `.github/workflows/hourly-wallpaper.yml`，每小时渲染、质量检查并发布到 GitHub Pages；`.github/workflows/hourly-watchdog.yml` 在每小时 `:35` 检查线上发布时间，超过 50 分钟未更新时自动补跑，为手机 `:45` 换图留出时间。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
+本机可执行 `scripts/hourly.sh`。云端使用 `.github/workflows/hourly-wallpaper.yml`，每小时渲染、质量检查并发布到 GitHub Pages；`.github/workflows/hourly-watchdog.yml` 在每小时 `:28` 检查线上发布时间，超过 50 分钟未更新时自动补跑，为手机 `:45` 换图及 CDN 缓存失效留出时间。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
 
-作为 GitHub 原生 cron 的独立备援，阿里云服务器在每小时 `:33` 向仓库专用 `scheduler` 分支推送心跳，触发同一 watchdog。服务器只使用本仓库 Deploy Key，不保存 GitHub Token。详见 [docs/aliyun-scheduler.md](docs/aliyun-scheduler.md)。
+作为 GitHub 原生 cron 的独立备援，阿里云服务器在每小时 `:25` 向仓库专用 `scheduler` 分支推送心跳，触发同一 watchdog。服务器只使用本仓库 Deploy Key，不保存 GitHub Token。详见 [docs/aliyun-scheduler.md](docs/aliyun-scheduler.md)。
 
 `.github/workflows/daily-storage-cleanup.yml` 每天上海时间 01:30 删除前一天的 Earth fallback caches 与构建 artifacts；始终保留最新一份卫星缓存，Pages artifacts 另有 1 天自动过期保护。
 
