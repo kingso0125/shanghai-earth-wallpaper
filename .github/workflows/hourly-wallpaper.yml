@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -43,3 +43,16 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Keep public-repository schedule active
+        if: github.event_name == 'schedule'
+        run: |
+          if [[ "$(date -u '+%d %H')" != "01 00" ]]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date -u '+%FT%TZ' > .github/schedule-heartbeat
+          git add .github/schedule-heartbeat
+          git commit -m "chore keep hourly schedule active [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
