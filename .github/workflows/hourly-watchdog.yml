@@ -1,0 +1,46 @@
+name: Hourly Earth Wallpaper Watchdog
+
+on:
+  schedule:
+    - cron: "50 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    outputs:
+      stale: ${{ steps.check.outputs.stale }}
+    steps:
+      - name: Check the latest published render
+        id: check
+        run: |
+          stale=true
+          manifest="$RUNNER_TEMP/manifest.json"
+          if curl --fail --silent --show-error --location \
+            "https://kingso0125.github.io/shanghai-earth-wallpaper/manifest.json?watchdog=$(date +%s)" \
+            --output "$manifest"; then
+            if python3 - "$manifest" <<'PY'
+          import json
+          import sys
+          from datetime import UTC, datetime
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              rendered = datetime.fromisoformat(json.load(handle)["rendered_utc"].replace("Z", "+00:00"))
+          age = (datetime.now(UTC) - rendered).total_seconds()
+          raise SystemExit(0 if age <= 70 * 60 else 1)
+          PY
+            then
+              stale=false
+            fi
+          fi
+          echo "stale=$stale" >> "$GITHUB_OUTPUT"
+
+  recover:
+    needs: freshness
+    if: needs.freshness.outputs.stale == 'true'
+    uses: ./.github/workflows/hourly-wallpaper.yml

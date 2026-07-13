@@ -24,7 +24,7 @@ earthwall-qa output/current
 
 ## 每小时运行
 
-本机可执行 `scripts/hourly.sh`。云端使用 `.github/workflows/hourly-wallpaper.yml`，每小时渲染、质量检查并发布到 GitHub Pages。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
+本机可执行 `scripts/hourly.sh`。云端使用 `.github/workflows/hourly-wallpaper.yml`，每小时渲染、质量检查并发布到 GitHub Pages；`.github/workflows/hourly-watchdog.yml` 在每小时 `:50` 检查线上发布时间，超过 70 分钟未更新时自动补跑。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
 
 iPhone 端配置见 [docs/iphone-shortcut.md](docs/iphone-shortcut.md)。
 

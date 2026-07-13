@@ -1,6 +1,7 @@
 name: Hourly Earth Wallpaper
 
 on:
+  workflow_call:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
