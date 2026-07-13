@@ -36,6 +36,30 @@ def _grade_earth(rgb: np.ndarray) -> np.ndarray:
     return np.clip(rgb, 0.0, 1.0)
 
 
+def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
+    """Keep daytime GeoColor intact while neutralizing synthetic IR purple at night."""
+    graded = np.power(np.clip(rgb[..., :3] * 1.08 + 0.012, 0.0, 1.0), 0.90)
+    initial_luminance = np.sum(
+        graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    magenta_excess = np.minimum(graded[..., 0], graded[..., 2]) - graded[..., 1]
+    magenta_mix = smoothstep(0.015, 0.075, magenta_excess)[..., None] * 0.94
+    infrared_neutral = initial_luminance * np.array([0.94, 1.0, 1.06], dtype=np.float32)
+    graded = graded * (1.0 - magenta_mix) + infrared_neutral * magenta_mix
+    luminance = np.sum(
+        graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    neutral = np.repeat(luminance, 3, axis=-1)
+    night_grade = neutral * np.array([0.78, 0.86, 0.96], dtype=np.float32)
+    night_grade += (graded - neutral) * 0.03
+    night_mix = smoothstep(0.06, 0.62, np.clip(1.0 - day, 0.0, 1.0))[..., None]
+    return np.clip(graded * (1.0 - night_mix) + night_grade * night_mix, 0.0, 1.0)
+
+
 def _cloud_alpha(visible: np.ndarray, infrared: np.ndarray, base: np.ndarray, day: np.ndarray):
     vis_luma = visible[..., :3].mean(axis=-1)
     base_luma = base[..., :3].mean(axis=-1)
@@ -73,9 +97,7 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
         satellite, source_valid = sample_geostationary_focus_plate(
             geocolor_map, preset, observation.satellite_longitude
         )
-        earth = np.power(
-            np.clip(satellite[..., :3] * 1.08 + 0.012, 0.0, 1.0), 0.90
-        )
+        earth = _grade_geocolor(satellite, day)
         earth = np.where(source_valid[..., None], earth, base_earth)
     else:
         visible_map = _load(observation.visible)

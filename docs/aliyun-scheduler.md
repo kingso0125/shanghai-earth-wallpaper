@@ -10,6 +10,8 @@
 
 服务器不保存 GitHub Token。`/etc/shanghai-earth-wallpaper/deploy_key` 是仅能读写该仓库的 GitHub Deploy Key，权限为 `0600`；它无法访问用户的其他仓库。
 
+GitHub `github-pages` Environment 的 deployment branch policy 只允许 `main` 和 `scheduler`；其他分支不能使用该环境发布 Pages。
+
 ## 服务器文件
 
 - `/usr/local/sbin/shanghai-earth-wallpaper-trigger`：受版本控制的心跳脚本。

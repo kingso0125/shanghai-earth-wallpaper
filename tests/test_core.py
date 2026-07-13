@@ -6,6 +6,7 @@ import numpy as np
 from earthwall.config import HOME, LOCK, SHANGHAI
 from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
+from earthwall.render import _grade_geocolor
 from earthwall.sources import latest_common_time
 
 
@@ -45,6 +46,24 @@ class CoreTests(unittest.TestCase):
         '''
         self.assertEqual(
             latest_common_time(xml), datetime(2026, 7, 13, 1, 20, tzinfo=UTC)
+        )
+
+    def test_geocolor_night_grade_removes_infrared_purple(self):
+        source = np.array([[[0.60, 0.10, 0.80]]], dtype=np.float32)
+        raw_grade = np.power(np.clip(source * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        night = _grade_geocolor(source, np.zeros((1, 1), dtype=np.float32))
+        day = _grade_geocolor(source, np.ones((1, 1), dtype=np.float32))
+
+        self.assertLess(float(np.ptp(night[0, 0])), float(np.ptp(raw_grade[0, 0])) * 0.5)
+        self.assertLess(float(night[0, 0, 0]), float(night[0, 0, 2]))
+        self.assertLess(float(np.ptp(day[0, 0])), float(np.ptp(raw_grade[0, 0])) * 0.5)
+
+        natural_land = np.array([[[0.20, 0.50, 0.15]]], dtype=np.float32)
+        natural_grade = np.power(np.clip(natural_land * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        np.testing.assert_allclose(
+            _grade_geocolor(natural_land, np.ones((1, 1), dtype=np.float32)),
+            natural_grade,
+            atol=1e-6,
         )
 
 
