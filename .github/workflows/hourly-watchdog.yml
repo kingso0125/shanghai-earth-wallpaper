@@ -2,7 +2,7 @@ name: Hourly Earth Wallpaper Watchdog
 
 on:
   schedule:
-    - cron: "50 * * * *"
+    - cron: "35 * * * *"
   workflow_dispatch:
     inputs:
       force_recovery:
@@ -44,7 +44,7 @@ jobs:
           with open(sys.argv[1], encoding="utf-8") as handle:
               rendered = datetime.fromisoformat(json.load(handle)["rendered_utc"].replace("Z", "+00:00"))
           age = (datetime.now(UTC) - rendered).total_seconds()
-          raise SystemExit(0 if age <= 70 * 60 else 1)
+          raise SystemExit(0 if age <= 50 * 60 else 1)
           PY
             then
               stale=false
