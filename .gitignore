@@ -8,3 +8,5 @@ build/
 public/
 outputs/
 *.egg-info/
+.wrangler/
+cloudflare/.wrangler/

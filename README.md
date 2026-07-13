@@ -26,6 +26,8 @@ earthwall-qa output/current
 
 本机可执行 `scripts/hourly.sh`。云端使用 `.github/workflows/hourly-wallpaper.yml`，每小时渲染、质量检查并发布到 GitHub Pages；`.github/workflows/hourly-watchdog.yml` 在每小时 `:35` 检查线上发布时间，超过 50 分钟未更新时自动补跑，为手机 `:45` 换图留出时间。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
 
+GitHub 原生 cron 之外，`cloudflare/` 提供独立 Cron Trigger 备援，用于在 GitHub 调度延迟或漏跑时触发同一 watchdog。部署和最小权限说明见 [docs/cloudflare-scheduler.md](docs/cloudflare-scheduler.md)。
+
 `.github/workflows/daily-storage-cleanup.yml` 每天上海时间 01:30 删除前一天的 Earth fallback caches 与构建 artifacts；始终保留最新一份卫星缓存，Pages artifacts 另有 1 天自动过期保护。
 
 iPhone 端配置见 [docs/iphone-shortcut.md](docs/iphone-shortcut.md)。
