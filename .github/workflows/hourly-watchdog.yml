@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "50 * * * *"
   workflow_dispatch:
+    inputs:
+      force_recovery:
+        description: Force the stale recovery path for validation
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -18,8 +24,14 @@ jobs:
     steps:
       - name: Check the latest published render
         id: check
+        env:
+          FORCE_RECOVERY: ${{ inputs.force_recovery }}
         run: |
           stale=true
+          if [[ "$FORCE_RECOVERY" == "true" ]]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           manifest="$RUNNER_TEMP/manifest.json"
           if curl --fail --silent --show-error --location \
             "https://kingso0125.github.io/shanghai-earth-wallpaper/manifest.json?watchdog=$(date +%s)" \
