@@ -70,7 +70,9 @@
 				<key>WFWallpaperLegibilityBlur</key>
 				<false/>
 				<key>WFWallpaperLocation</key>
-				<string>Lock Screen</string>
+				<array>
+					<string>Lock Screen</string>
+				</array>
 				<key>WFWallpaperPerspectiveZoom</key>
 				<false/>
 				<key>WFWallpaperShowPreview</key>
@@ -145,7 +147,9 @@
 				<key>WFWallpaperLegibilityBlur</key>
 				<false/>
 				<key>WFWallpaperLocation</key>
-				<string>Home Screen</string>
+				<array>
+					<string>Home Screen</string>
+				</array>
 				<key>WFWallpaperPerspectiveZoom</key>
 				<false/>
 				<key>WFWallpaperShowPreview</key>
