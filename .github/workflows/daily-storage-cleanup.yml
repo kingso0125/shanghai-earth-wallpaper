@@ -1,0 +1,20 @@
+name: Daily Storage Cleanup
+
+on:
+  schedule:
+    - cron: "30 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Delete yesterday's caches and build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/cleanup_github_storage.py --execute
