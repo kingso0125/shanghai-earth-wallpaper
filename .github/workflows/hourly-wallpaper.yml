@@ -30,7 +30,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: cache
-          key: earthwall-cache-${{ runner.os }}
+          key: earthwall-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: earthwall-cache-${{ runner.os }}-
       - run: pip install .
       - run: python -m unittest discover -s tests -v
