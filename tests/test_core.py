@@ -60,6 +60,11 @@ class CoreTests(unittest.TestCase):
 
         natural_land = np.array([[[0.20, 0.50, 0.15]]], dtype=np.float32)
         natural_grade = np.power(np.clip(natural_land * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        natural_grade = np.clip(
+            natural_grade * np.array([1.035, 1.01, 0.975], dtype=np.float32),
+            0.0,
+            1.0,
+        )
         np.testing.assert_allclose(
             _grade_geocolor(natural_land, np.ones((1, 1), dtype=np.float32)),
             natural_grade,

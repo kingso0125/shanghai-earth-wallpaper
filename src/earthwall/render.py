@@ -30,15 +30,17 @@ def _grade_earth(rgb: np.ndarray) -> np.ndarray:
     luminance = rgb[..., :3].mean(axis=-1, keepdims=True)
     rgb = luminance + (rgb[..., :3] - luminance) * 1.08
     rgb = np.power(np.clip(rgb * 1.18 + 0.015, 0.0, 1.0), 0.86)
-    rgb[..., 0] *= 0.98
-    rgb[..., 1] *= 1.03
-    rgb[..., 2] *= 1.08
+    rgb[..., 0] *= 1.03
+    rgb[..., 1] *= 1.01
+    rgb[..., 2] *= 0.99
     return np.clip(rgb, 0.0, 1.0)
 
 
 def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
     """Keep daytime GeoColor intact while neutralizing synthetic IR purple at night."""
     graded = np.power(np.clip(rgb[..., :3] * 1.08 + 0.012, 0.0, 1.0), 0.90)
+    graded *= np.array([1.035, 1.01, 0.975], dtype=np.float32)
+    graded = np.clip(graded, 0.0, 1.0)
     initial_luminance = np.sum(
         graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
         axis=-1,
@@ -54,7 +56,7 @@ def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
         keepdims=True,
     )
     neutral = np.repeat(luminance, 3, axis=-1)
-    night_grade = neutral * np.array([0.78, 0.86, 0.96], dtype=np.float32)
+    night_grade = neutral * np.array([0.88, 0.90, 0.92], dtype=np.float32)
     night_grade += (graded - neutral) * 0.03
     night_mix = smoothstep(0.06, 0.62, np.clip(1.0 - day, 0.0, 1.0))[..., None]
     return np.clip(graded * (1.0 - night_mix) + night_grade * night_mix, 0.0, 1.0)
@@ -143,7 +145,7 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
         )
         cloud_brightness = 0.28 + 0.62 * smoothstep(0.08, 0.78, cloud_luminance)
         cloud_color = cloud_brightness[..., None] * np.array(
-            [0.79, 0.86, 0.94], dtype=np.float32
+            [0.92, 0.91, 0.90], dtype=np.float32
         )
         night_luminance = np.sum(
             base_earth * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
@@ -151,7 +153,14 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
             keepdims=True,
         )
         night_surface = night_luminance + (base_earth - night_luminance) * 0.58
-        night_surface *= np.array([0.96, 0.98, 1.03], dtype=np.float32)
+        ocean_weight = smoothstep(
+            0.008,
+            0.075,
+            base_earth[..., 2] - np.maximum(base_earth[..., 0], base_earth[..., 1]),
+        )[..., None]
+        land_tint = np.array([1.08, 1.00, 0.91], dtype=np.float32)
+        ocean_tint = np.array([0.96, 1.00, 1.07], dtype=np.float32)
+        night_surface *= land_tint * (1.0 - ocean_weight) + ocean_tint * ocean_weight
         night_surface = np.power(np.clip(night_surface * 1.24 + 0.008, 0.0, 1.0), 0.90)
         night_earth = night_surface * (1.0 - cloud_alpha[..., None] * 0.70)
         night_earth += cloud_color * cloud_alpha[..., None] * 0.70
