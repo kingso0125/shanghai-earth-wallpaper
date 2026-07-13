@@ -9,9 +9,11 @@ import numpy as np
 from PIL import Image
 
 from .config import HOME, LOCK, RenderPreset
+from .geometry import camera_grid
+from .lighting import daylight
 
 
-def _metrics(path: Path, preset: RenderPreset) -> dict:
+def _metrics(path: Path, preset: RenderPreset, observation: datetime) -> dict:
     rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     if (rgb.shape[1], rgb.shape[0]) != preset.size:
         raise ValueError(f"{path} has incorrect dimensions")
@@ -20,6 +22,8 @@ def _metrics(path: Path, preset: RenderPreset) -> dict:
     cx, cy = preset.center_px
     earth_mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= preset.globe_radius_px**2
     earth_values = luminance[earth_mask]
+    _, _, visible, _, vectors = camera_grid(preset)
+    day_fraction = float(daylight(vectors, observation)[visible].mean())
     gx = np.abs(np.diff(luminance, axis=1)).mean()
     gy = np.abs(np.diff(luminance, axis=0)).mean()
     safe_height = 560 if preset.name == "lock" else 470
@@ -29,6 +33,8 @@ def _metrics(path: Path, preset: RenderPreset) -> dict:
         "earth_p95": float(np.percentile(earth_values, 95)),
         "earth_clipped_fraction": float((earth_values > 0.985).mean()),
         "detail_gradient": float(gx + gy),
+        "day_fraction": day_fraction,
+        "minimum_expected_brightness": 0.17 + day_fraction * 0.08,
     }
 
 
@@ -39,8 +45,8 @@ def audit(directory: Path) -> dict:
     age_hours = (rendered.astimezone(UTC) - observation.astimezone(UTC)).total_seconds() / 3600
     result = {
         "observation_age_hours": age_hours,
-        "lock": _metrics(directory / "lock.jpg", LOCK),
-        "home": _metrics(directory / "home.jpg", HOME),
+        "lock": _metrics(directory / "lock.jpg", LOCK, observation),
+        "home": _metrics(directory / "home.jpg", HOME, observation),
     }
     failures = []
     if "CIRA SLIDER" in manifest["source"] and manifest.get("render_mode") != "fused_geostationary_plate_shanghai_meridian":
@@ -51,7 +57,7 @@ def audit(directory: Path) -> dict:
         metrics = result[name]
         if metrics["safe_area_mean"] > 0.055:
             failures.append(f"{name} safe area is too bright")
-        if not 0.20 <= metrics["earth_mean"] <= 0.68:
+        if not metrics["minimum_expected_brightness"] <= metrics["earth_mean"] <= 0.68:
             failures.append(f"{name} Earth brightness is outside target")
         if metrics["earth_clipped_fraction"] > 0.12:
             failures.append(f"{name} has excessive highlight clipping")

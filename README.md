@@ -38,6 +38,8 @@ iPhone 端配置见 [docs/iphone-shortcut.md](docs/iphone-shortcut.md)。
 
 GK2A 不可用时依次降级到 Himawari-9、NASA GIBS 与缓存数据；`manifest.json` 的 `render_mode: fused_geostationary_plate_shanghai_meridian`、观测源和文件哈希用于验证实际路径。
 
+夜间画面使用 NASA GIBS `VIIRS_CityLights_2012` 的真实观测基线。灯光位置和相对分布不生成、不移动；程序只依据当前太阳位置决定夜半球，并使用当小时 GK2A 云层降低被云覆盖区域的灯光。夜光底图不是小时级电力监控数据，`manifest.json` 会明确标注这一时间属性。
+
 `assets/space-background.jpg` 是可选的生成式美术层，只影响星空与极弱的银河尘埃；真实地球、云层和昼夜状态不会经过生成模型。没有该文件时自动使用确定性的程序化星空。
 
 ## Attribution

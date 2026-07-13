@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from .config import PRESETS, RenderPreset
 from .geometry import camera_grid, sample_equirectangular, sample_geostationary_focus_plate
@@ -60,6 +60,45 @@ def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
     return np.clip(graded * (1.0 - night_mix) + night_grade * night_mix, 0.0, 1.0)
 
 
+def _night_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
+    """Extract neutral IR cloud texture without mistaking warm city lights for clouds."""
+    rgb = satellite[..., :3]
+    luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1
+    )
+    chroma = rgb.max(axis=-1) - rgb.min(axis=-1)
+    neutral_brightness = np.clip(luminance - chroma * 0.70, 0.0, 1.0)
+    night = 1.0 - smoothstep(0.08, 0.72, day)
+    return smoothstep(0.11, 0.66, neutral_brightness) * night
+
+
+def _city_light_signal(lights: np.ndarray) -> np.ndarray:
+    """Isolate measured VIIRS light emission from the blue night-map background."""
+    rgb = lights[..., :3]
+    warm_radiance = np.clip(
+        (rgb[..., 0] + rgb[..., 1]) * 0.5 - rgb[..., 2] * 0.56, 0.0, 1.0
+    )
+    core = np.power(smoothstep(0.045, 0.76, warm_radiance), 1.28)
+    glow_image = Image.fromarray(np.uint8(np.clip(core, 0.0, 1.0) * 255), "L")
+    glow = np.asarray(glow_image.filter(ImageFilter.GaussianBlur(1.8)), dtype=np.float32) / 255.0
+    return np.clip(core * 0.70 + glow * 0.38, 0.0, 1.0)
+
+
+def _blend_city_lights(
+    earth: np.ndarray,
+    lights: np.ndarray,
+    day: np.ndarray,
+    cloud_alpha: np.ndarray,
+) -> np.ndarray:
+    """Add real VIIRS lights on the night side, dimmed by the live cloud field."""
+    night = smoothstep(0.14, 0.88, 1.0 - day)
+    cloud_visibility = np.clip(1.0 - cloud_alpha * 0.86, 0.08, 1.0)
+    strength = _city_light_signal(lights) * night * cloud_visibility
+    light_color = np.array([1.0, 0.69, 0.32], dtype=np.float32)
+    overlay = np.clip(strength[..., None] * light_color * 0.86, 0.0, 0.88)
+    return np.clip(1.0 - (1.0 - earth) * (1.0 - overlay), 0.0, 1.0)
+
+
 def _cloud_alpha(visible: np.ndarray, infrared: np.ndarray, base: np.ndarray, day: np.ndarray):
     vis_luma = visible[..., :3].mean(axis=-1)
     base_luma = base[..., :3].mean(axis=-1)
@@ -85,19 +124,39 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
     day = daylight(vectors, observation.timestamp)
 
     base_earth = _grade_earth(base)
-    illumination = 0.25 + 0.75 * np.power(day[..., None], 0.54)
+    illumination = 0.28 + 0.72 * np.power(day[..., None], 0.54)
     base_earth *= illumination
 
-    light_strength = np.power(lights[..., :3].mean(axis=-1), 1.45) * (1.0 - day) * 1.55
-    light_color = np.array([1.0, 0.66, 0.28], dtype=np.float32)
-    base_earth += light_strength[..., None] * light_color
+    cloud_alpha = np.zeros_like(day)
 
     if observation.geocolor is not None:
         geocolor_map = _load(observation.geocolor)
         satellite, source_valid = sample_geostationary_focus_plate(
             geocolor_map, preset, observation.satellite_longitude
         )
-        earth = _grade_geocolor(satellite, day)
+        day_earth = _grade_geocolor(satellite, day)
+        cloud_alpha = _night_cloud_alpha(satellite, day)
+        cloud_luminance = np.sum(
+            satellite[..., :3]
+            * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+            axis=-1,
+        )
+        cloud_brightness = 0.28 + 0.62 * smoothstep(0.08, 0.78, cloud_luminance)
+        cloud_color = cloud_brightness[..., None] * np.array(
+            [0.79, 0.86, 0.94], dtype=np.float32
+        )
+        night_luminance = np.sum(
+            base_earth * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+            axis=-1,
+            keepdims=True,
+        )
+        night_surface = night_luminance + (base_earth - night_luminance) * 0.58
+        night_surface *= np.array([0.96, 0.98, 1.03], dtype=np.float32)
+        night_surface = np.power(np.clip(night_surface * 1.24 + 0.008, 0.0, 1.0), 0.90)
+        night_earth = night_surface * (1.0 - cloud_alpha[..., None] * 0.70)
+        night_earth += cloud_color * cloud_alpha[..., None] * 0.70
+        day_mix = smoothstep(0.08, 0.72, day)[..., None]
+        earth = night_earth * (1.0 - day_mix) + day_earth * day_mix
         earth = np.where(source_valid[..., None], earth, base_earth)
     else:
         visible_map = _load(observation.visible)
@@ -111,6 +170,8 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
             [0.92 * cloud_light, 0.97 * cloud_light, 1.0 * cloud_light], axis=-1
         )
         earth = earth * (1.0 - cloud_alpha[..., None] * 0.78) + cloud_color * cloud_alpha[..., None]
+
+    earth = _blend_city_lights(earth, lights, day, cloud_alpha)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)
     earth += rim[..., None] * np.array([0.20, 0.58, 0.88], dtype=np.float32) * 0.50
@@ -150,6 +211,11 @@ def render_pair(observation: Observation, output: Path) -> dict:
         "view_center": {"latitude": 0.0, "longitude": 121.4737},
         "sun_vector": [round(float(value), 7) for value in sun],
         "acknowledgement": ACKNOWLEDGEMENT,
+        "night_lights": {
+            "source": "NASA GIBS VIIRS_CityLights_2012",
+            "mode": "night-side, cloud-occluded",
+            "temporal_model": "observed static baseline; sun and cloud masks are current",
+        },
         "artifacts": artifacts,
     }
     (output / "manifest.json").write_text(

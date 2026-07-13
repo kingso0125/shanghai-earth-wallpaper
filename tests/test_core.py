@@ -6,7 +6,7 @@ import numpy as np
 from earthwall.config import HOME, LOCK, SHANGHAI
 from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
-from earthwall.render import _grade_geocolor
+from earthwall.render import _blend_city_lights, _grade_geocolor, _night_cloud_alpha
 from earthwall.sources import latest_common_time
 
 
@@ -65,6 +65,30 @@ class CoreTests(unittest.TestCase):
             natural_grade,
             atol=1e-6,
         )
+
+    def test_city_lights_are_night_only_and_cloud_occluded(self):
+        earth = np.zeros((9, 9, 3), dtype=np.float32)
+        lights = np.zeros((9, 9, 4), dtype=np.float32)
+        lights[4, 4] = (1.0, 1.0, 0.65, 1.0)
+        clear = np.zeros((9, 9), dtype=np.float32)
+
+        night = _blend_city_lights(earth, lights, np.zeros((9, 9), dtype=np.float32), clear)
+        day = _blend_city_lights(earth, lights, np.ones((9, 9), dtype=np.float32), clear)
+        cloudy = _blend_city_lights(
+            earth,
+            lights,
+            np.zeros((9, 9), dtype=np.float32),
+            np.ones((9, 9), dtype=np.float32),
+        )
+
+        self.assertGreater(float(night[4, 4].mean()), 0.25)
+        np.testing.assert_allclose(day, earth, atol=1e-6)
+        self.assertLess(float(cloudy[4, 4].mean()), float(night[4, 4].mean()) * 0.3)
+
+    def test_warm_lights_are_not_classified_as_night_clouds(self):
+        satellite = np.array([[[0.95, 0.62, 0.12]]], dtype=np.float32)
+        cloud = _night_cloud_alpha(satellite, np.zeros((1, 1), dtype=np.float32))
+        self.assertLess(float(cloud[0, 0]), 0.15)
 
 
 if __name__ == "__main__":
