@@ -20,7 +20,7 @@
 
 ## 位置自适应版本
 
-启用后，每次运行先执行“获取当前位置”，将纬度、经度、定位精度和城市名通过 HTTPS POST 到 `https://2026.mtomorrow.com/earthwall/api/location`。请求使用设备私有 Bearer Token；Token 不写入公开仓库和安装页。
+启用后，每次运行先执行“获取当前位置”，将纬度、经度、定位精度和城市名通过 HTTPS POST 到 `https://earthwall.47-116-45-167.nip.io/earthwall/api/location`。请求使用设备私有 Bearer Token；Token 不写入公开仓库和安装页。
 
 - 新位置距离当前中心不超过 80 公里：不改变视角，直接换图。
 - 超过 80 公里：服务器保存新位置、立即重新生成，再返回结果。
@@ -29,8 +29,8 @@
 
 位置自适应图片地址不经过 GitHub CDN：
 
-- Lock：`https://2026.mtomorrow.com/earthwall/lock.jpg`
-- Home：`https://2026.mtomorrow.com/earthwall/home.jpg`
+- Lock：`https://earthwall.47-116-45-167.nip.io/earthwall/lock.jpg`
+- Home：`https://earthwall.47-116-45-167.nip.io/earthwall/home.jpg`
 
 ## 每小时自动运行
 
