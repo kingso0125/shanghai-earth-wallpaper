@@ -3,6 +3,8 @@ name: Hourly Earth Wallpaper Watchdog
 on:
   schedule:
     - cron: "35 * * * *"
+    # Temporary scheduler-registration probe; remove after the first schedule event.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       force_recovery:
