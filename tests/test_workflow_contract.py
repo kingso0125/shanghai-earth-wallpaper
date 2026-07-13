@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class WorkflowContractTests(unittest.TestCase):
     def test_watchdog_can_recover_before_phone_automation(self):
         workflow = (ROOT / ".github/workflows/hourly-watchdog.yml").read_text()
+        self.assertIn("- scheduler", workflow)
         self.assertIn('cron: "35 * * * *"', workflow)
         self.assertIn("age <= 50 * 60", workflow)
 

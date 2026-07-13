@@ -1,6 +1,9 @@
 name: Hourly Earth Wallpaper Watchdog
 
 on:
+  push:
+    branches:
+      - scheduler
   schedule:
     - cron: "35 * * * *"
   workflow_dispatch:
