@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="cache-control" content="no-cache">
+  <title>Shanghai Earth Wallpaper</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { margin: 0; background: #05070a; color: #eef6ff; }
+    main { max-width: 980px; margin: auto; padding: 40px 20px 64px; }
+    h1 { font-size: clamp(28px, 5vw, 52px); margin: 0 0 8px; }
+    #status { color: #9eb4c9; margin-bottom: 28px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px; }
+    figure { margin: 0; padding: 12px; border: 1px solid #1d2b38; border-radius: 24px; background: #0a0e13; }
+    img { display: block; width: 100%; border-radius: 16px; }
+    figcaption { display: flex; justify-content: space-between; align-items: center; padding: 12px 4px 2px; }
+    a { color: #93d3ff; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>上海 · 实时地球壁纸</h1>
+  <p id="status">正在读取最新观测时间…</p>
+  <section class="grid">
+    <figure><img id="lock" src="lock.jpg" alt="Lock wallpaper"><figcaption><span>Lock</span><a id="lock-link" href="lock.jpg">原图</a></figcaption></figure>
+    <figure><img id="home" src="home.jpg" alt="Home wallpaper"><figcaption><span>Home</span><a id="home-link" href="home.jpg">原图</a></figcaption></figure>
+  </section>
+</main>
+<script>
+fetch('manifest.json?ts=' + Date.now(), {cache: 'no-store'})
+  .then(r => r.json())
+  .then(m => {
+    const time = new Date(m.observation_utc).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'});
+    document.querySelector('#status').textContent = `卫星观测：${time} · ${m.source_status === 'fresh' ? '最新数据' : '缓存降级'}`;
+    for (const name of ['lock', 'home']) {
+      const url = `${name}.jpg?v=${m.artifacts[name].sha256.slice(0, 16)}`;
+      document.querySelector(`#${name}`).src = url;
+      document.querySelector(`#${name}-link`).href = url;
+    }
+  });
+</script>
+</body>
+</html>

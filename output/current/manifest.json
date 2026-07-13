@@ -1,0 +1,42 @@
+{
+  "observation_utc": "2026-07-13T03:50:00Z",
+  "rendered_utc": "2026-07-13T04:28:56.870120Z",
+  "source": "CIRA SLIDER / KMA GK2A",
+  "source_status": "fresh",
+  "render_mode": "fused_geostationary_plate_shanghai_meridian",
+  "observation_asset_sha256": "2a686634c50e9b56ab57ad6773f74c309273395bea0b523a1a2aa9560668b028",
+  "global_observation_asset_sha256": null,
+  "target": {
+    "name": "Shanghai",
+    "latitude": 31.2304,
+    "longitude": 121.4737
+  },
+  "view_center": {
+    "latitude": 0.0,
+    "longitude": 121.4737
+  },
+  "sun_vector": [
+    -0.5167114,
+    0.7698173,
+    0.3746874
+  ],
+  "acknowledgement": "Satellite imagery: Japan Meteorological Agency (JMA), NOAA/NESDIS, and Colorado State University/CIRA, processed through CIRA SLIDER. Static Earth and city-light imagery: NASA Earth Observatory/GIBS.",
+  "artifacts": {
+    "lock": {
+      "file": "lock.jpg",
+      "sha256": "737c1f3f798b8749a5aca489865f7bacdcabea01b0952da2ac51ac5fa6d770ab",
+      "size": [
+        1320,
+        2868
+      ]
+    },
+    "home": {
+      "file": "home.jpg",
+      "sha256": "0d161fa45e51cb808a9ee1491582f1efeadc0ff0d6f1b12863753e6535fa37d1",
+      "size": [
+        1320,
+        2868
+      ]
+    }
+  }
+}

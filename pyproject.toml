@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "earthwall"
+version = "0.1.0"
+description = "Shanghai-centered hourly Earth wallpapers"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0", "Pillow>=11.0"]
+
+[project.scripts]
+earthwall = "earthwall.cli:main"
+earthwall-qa = "earthwall.qa:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
