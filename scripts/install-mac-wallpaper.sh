@@ -3,19 +3,10 @@ set -euo pipefail
 
 repo="${0:A:h:h}"
 agent="$HOME/Library/LaunchAgents/com.kingso.earthwall.mac.plist"
-saver="$HOME/Library/Screen Savers/Earthwall.saver"
 logs="$HOME/Library/Logs/EarthwallMac"
 uid="$(id -u)"
 
-mkdir -p "${agent:h}" "${saver:h}" "$logs"
-rm -rf "$saver"
-mkdir -p "$saver/Contents/MacOS"
-/bin/cp "$repo/macos/EarthwallScreenSaver-Info.plist" "$saver/Contents/Info.plist"
-/usr/bin/clang -fobjc-arc -dynamiclib \
-  -framework Cocoa -framework ScreenSaver \
-  "$repo/macos/EarthwallScreenSaverView.m" \
-  -o "$saver/Contents/MacOS/Earthwall"
-/usr/bin/codesign --force --sign - "$saver"
+mkdir -p "${agent:h}" "$logs"
 
 cat > "$agent" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,11 +29,8 @@ PLIST
 /bin/launchctl bootstrap "gui/$uid" "$agent"
 /bin/launchctl enable "gui/$uid/com.kingso.earthwall.mac"
 
-# Legacy ScreenSaver.framework remains the compatible local-image path.
-/usr/bin/defaults -currentHost write com.apple.screensaver moduleDict -dict \
-  moduleName Earthwall path "$saver" type -int 0
-/usr/bin/defaults -currentHost write com.apple.screensaver moduleName -string Earthwall
-/usr/bin/defaults -currentHost write com.apple.screensaver modulePath -string "$saver"
-
 "$repo/scripts/mac-hourly.sh"
+PYTHONPATH="$repo/src" /usr/bin/python3 -m earthwall.mac_lock \
+  "$HOME/Library/Application Support/EarthwallMac/current/mac-lock.jpg"
+/usr/bin/killall WallpaperAgent ScreenSaverEngine 2>/dev/null || true
 /bin/launchctl kickstart -k "gui/$uid/com.kingso.earthwall.mac"
