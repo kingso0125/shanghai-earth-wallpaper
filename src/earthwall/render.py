@@ -142,6 +142,35 @@ def _cloud_alpha(visible: np.ndarray, infrared: np.ndarray, base: np.ndarray, da
     return np.clip(np.power(cloud, 0.82) * 0.92, 0.0, 0.94)
 
 
+def _fallback_cloud_appearance(
+    visible: np.ndarray, cloud_alpha: np.ndarray, day: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Preserve observed cloud optical depth instead of painting a flat white veil."""
+    reflectance = smoothstep(0.06, 0.74, visible[..., :3].mean(axis=-1))
+    reflected_detail = np.power(reflectance, 0.72)
+
+    day_tone = 0.40 + 0.48 * reflected_detail
+    night_tone = 0.25 + 0.46 * np.power(cloud_alpha, 0.84)
+    day_mix = smoothstep(0.08, 0.72, day)
+    tone = night_tone * (1.0 - day_mix) + day_tone * day_mix
+
+    day_color = np.array([1.02, 1.00, 0.97], dtype=np.float32)
+    night_color = np.array([0.88, 0.92, 0.98], dtype=np.float32)
+    color_balance = (
+        night_color[None, None, :] * (1.0 - day_mix[..., None])
+        + day_color[None, None, :] * day_mix[..., None]
+    )
+    cloud_color = np.clip(tone[..., None] * color_balance, 0.0, 0.92)
+
+    # Thin clouds remain translucent; bright convective tops become denser and
+    # brighter. Both are driven by the satellite reflectance texture.
+    daytime_strength = 0.34 + 0.52 * reflected_detail
+    nighttime_strength = 0.66 + 0.12 * cloud_alpha
+    strength = nighttime_strength * (1.0 - day_mix) + daytime_strength * day_mix
+    mix = np.clip(cloud_alpha * strength, 0.0, 0.82)
+    return cloud_color, mix
+
+
 def render_one(observation: Observation, preset: RenderPreset, destination: Path) -> None:
     base_map = _load(observation.base)
     lights_map = _load(observation.lights)
@@ -200,11 +229,8 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
         infrared = sample_equirectangular(infrared_map, lat, lon)
         earth = base_earth
         cloud_alpha = _cloud_alpha(visible, infrared, base, day)
-        cloud_light = 0.42 + 0.58 * np.power(day, 0.38)
-        cloud_color = np.stack(
-            [0.92 * cloud_light, 0.97 * cloud_light, 1.0 * cloud_light], axis=-1
-        )
-        earth = earth * (1.0 - cloud_alpha[..., None] * 0.78) + cloud_color * cloud_alpha[..., None]
+        cloud_color, cloud_mix = _fallback_cloud_appearance(visible, cloud_alpha, day)
+        earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
 
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
 

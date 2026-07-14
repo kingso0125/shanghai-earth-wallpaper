@@ -15,6 +15,7 @@ from earthwall.lighting import daylight, sun_vector
 from earthwall.location import Location, LocationStore, haversine_km
 from earthwall.render import (
     _blend_city_lights,
+    _fallback_cloud_appearance,
     _feather_coverage,
     _grade_geocolor,
     _night_cloud_alpha,
@@ -188,6 +189,19 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(float(feathered[50, 50]), 0.0)
         self.assertGreater(float(feathered[50, 55]), 0.0)
         self.assertLess(float(feathered[50, 55]), 1.0)
+
+    def test_fallback_cloud_style_preserves_optical_depth(self):
+        visible = np.array(
+            [[[[0.16, 0.16, 0.16], [0.68, 0.68, 0.68]]]], dtype=np.float32
+        ).reshape(1, 2, 3)
+        alpha = np.array([[0.42, 0.92]], dtype=np.float32)
+        color, mix = _fallback_cloud_appearance(
+            visible, alpha, np.ones((1, 2), dtype=np.float32)
+        )
+
+        self.assertGreater(float(color[0, 1].mean()), float(color[0, 0].mean()) + 0.2)
+        self.assertGreater(float(mix[0, 1]), float(mix[0, 0]) + 0.4)
+        self.assertGreater(float(color[0, 1, 0]), float(color[0, 1, 2]))
 
 
 if __name__ == "__main__":
