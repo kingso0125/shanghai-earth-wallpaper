@@ -91,7 +91,13 @@ def _night_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
 def _feather_coverage(alpha: np.ndarray, radius: float = 96.0) -> np.ndarray:
     """Hide rectangular WMS coverage edges without changing cloud texture."""
     image = Image.fromarray(np.uint8(np.clip(alpha, 0.0, 1.0) * 255), "L")
-    return np.asarray(image.filter(ImageFilter.GaussianBlur(radius)), dtype=np.float32) / 255.0
+    blurred = (
+        np.asarray(image.filter(ImageFilter.GaussianBlur(radius)), dtype=np.float32)
+        / 255.0
+    )
+    # Fade inward from the valid footprint. Using the raw blur would spread a
+    # translucent rectangular haze outside the satellite coverage boundary.
+    return smoothstep(0.54, 0.98, blurred)
 
 
 def _city_light_signal(lights: np.ndarray) -> np.ndarray:

@@ -184,7 +184,9 @@ class CoreTests(unittest.TestCase):
         alpha = np.zeros((101, 101), dtype=np.float32)
         alpha[:, 50:] = 1.0
         feathered = _feather_coverage(alpha, radius=8.0)
-        self.assertGreater(float(feathered[50, 45]), 0.0)
+        self.assertEqual(float(feathered[50, 45]), 0.0)
+        self.assertEqual(float(feathered[50, 50]), 0.0)
+        self.assertGreater(float(feathered[50, 55]), 0.0)
         self.assertLess(float(feathered[50, 55]), 1.0)
 
 
