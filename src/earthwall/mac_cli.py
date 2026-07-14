@@ -38,6 +38,7 @@ def acquire_mac(cache: Path) -> Observation:
                 status="fresh",
                 source=f"{manifest['source']} (synchronized raw observation)",
                 satellite_longitude=140.7,
+                terrain=observation.terrain,
             )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         pass

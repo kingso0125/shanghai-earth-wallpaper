@@ -19,6 +19,7 @@ from .config import (
     GIBS_ENDPOINT,
     IR_LAYER,
     LIGHTS_LAYER,
+    TERRAIN_LAYER,
     VISIBLE_LAYER,
 )
 
@@ -34,6 +35,7 @@ class Observation:
     status: str
     source: str = "CIRA SLIDER / KMA GK2A"
     satellite_longitude: float = 140.7
+    terrain: Path | None = None
 
 
 def _request(url: str, timeout: int = 90) -> bytes:
@@ -207,10 +209,19 @@ def acquire(cache: Path) -> Observation:
     cache.mkdir(parents=True, exist_ok=True)
     base = cache / "blue-marble.jpg"
     lights = cache / "city-lights.jpg"
+    terrain = cache / "terrain-relief.jpg"
     if not _valid_image(base):
         _atomic_download(_wms_url(BASE_LAYER, timestamp=None, image_format="image/jpeg"), base)
     if not _valid_image(lights):
         _atomic_download(_wms_url(LIGHTS_LAYER, timestamp=None, image_format="image/jpeg"), lights)
+    if not _valid_image(terrain):
+        try:
+            _atomic_download(
+                _wms_url(TERRAIN_LAYER, timestamp=None, image_format="image/jpeg"),
+                terrain,
+            )
+        except Exception:
+            terrain = None
     # Himawari is the primary plate: its full disk is consistently complete at
     # high northern latitudes. GK2A remains the live fallback when JMA is late.
     for satellite, source, satellite_longitude in CIRA_SOURCES:
@@ -226,6 +237,7 @@ def acquire(cache: Path) -> Observation:
                 status="fresh",
                 source=source,
                 satellite_longitude=satellite_longitude,
+                terrain=terrain,
             )
         except Exception:
             pass
@@ -244,6 +256,7 @@ def acquire(cache: Path) -> Observation:
                 "cached",
                 f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
                 128.2 if satellite == "gk2a" else 140.7,
+                terrain,
             )
 
     try:
@@ -272,6 +285,7 @@ def acquire(cache: Path) -> Observation:
             "fresh",
             "NASA GIBS / JMA Himawari-9",
             140.7,
+            terrain,
         )
     except Exception:
         cached = _newest_cached_pair(cache)
@@ -279,6 +293,7 @@ def acquire(cache: Path) -> Observation:
             timestamp, visible, infrared = cached
             return Observation(
                 timestamp, visible, infrared, None, base, lights, "cached",
+                terrain=terrain,
             )
         geocolor_cached = _newest_cached_geocolor(cache)
         if geocolor_cached is None:
@@ -288,6 +303,7 @@ def acquire(cache: Path) -> Observation:
             timestamp, geocolor, geocolor, geocolor, base, lights, "cached",
             f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
             128.2 if satellite == "gk2a" else 140.7,
+            terrain,
         )
 
 

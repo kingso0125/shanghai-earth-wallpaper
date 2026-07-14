@@ -1,5 +1,8 @@
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import numpy as np
 
@@ -15,14 +18,18 @@ from earthwall.lighting import daylight, sun_vector
 from earthwall.location import Location, LocationStore, haversine_km
 from earthwall.render import (
     _apple_natural_grade,
+    _apply_terrain_relief,
     _blend_city_lights,
+    _city_light_signal,
+    _cloud_alpha,
     _fallback_cloud_appearance,
     _feather_coverage,
     _grade_geocolor,
     _night_cloud_alpha,
     _sharpen_cloud_texture,
+    render_pair,
 )
-from earthwall.sources import CIRA_SOURCES, latest_common_time
+from earthwall.sources import CIRA_SOURCES, Observation, latest_common_time
 
 
 class CoreTests(unittest.TestCase):
@@ -92,6 +99,29 @@ class CoreTests(unittest.TestCase):
         self.assertGreaterEqual(float(day.min()), 0.0)
         self.assertLessEqual(float(day.max()), 1.0)
         self.assertAlmostEqual(float(np.linalg.norm(sun_vector(datetime.now(UTC)))), 1.0, places=5)
+
+    def test_render_pair_uses_current_lighting_time_not_observation_time(self):
+        observation = Observation(
+            timestamp=datetime(2026, 7, 14, 9, 30, tzinfo=UTC),
+            visible=Path("visible.png"),
+            infrared=Path("infrared.png"),
+            geocolor=None,
+            base=Path("base.png"),
+            lights=Path("lights.png"),
+            status="fresh",
+        )
+        lighting_time = datetime(2026, 7, 14, 13, 0, tzinfo=UTC)
+        with TemporaryDirectory() as directory, patch(
+            "earthwall.render.render_one"
+        ) as render, patch("earthwall.render.sha256", return_value="hash"):
+            manifest = render_pair(
+                observation, Path(directory), lighting_time=lighting_time
+            )
+        self.assertEqual(manifest["lighting_utc"], "2026-07-14T13:00:00Z")
+        self.assertEqual(render.call_count, 2)
+        self.assertTrue(
+            all(call.kwargs["lighting_time"] == lighting_time for call in render.call_args_list)
+        )
 
     def test_native_himawari_plate_keeps_center_pixel(self):
         image = np.zeros((101, 101, 4), dtype=np.float32)
@@ -225,6 +255,32 @@ class CoreTests(unittest.TestCase):
         self.assertGreater(float(sharpened[4, 4].mean()), float(earth[4, 4].mean()))
         np.testing.assert_allclose(sharpened[0, 0], earth[0, 0], atol=1e-6)
 
+    def test_terrain_relief_adds_land_detail_but_stays_below_clouds(self):
+        earth = np.full((21, 21, 3), 0.5, dtype=np.float32)
+        relief = np.full((21, 21, 4), 0.68, dtype=np.float32)
+        relief[..., 3] = 1.0
+        relief[9:12, 9:12, :3] = 0.84
+        day = np.ones((21, 21), dtype=np.float32)
+        clear = _apply_terrain_relief(
+            earth, relief, np.zeros((21, 21), dtype=np.float32), day
+        )
+        cloudy = _apply_terrain_relief(
+            earth, relief, np.ones((21, 21), dtype=np.float32), day
+        )
+        self.assertGreater(float(clear[10, 10].mean()), 0.52)
+        np.testing.assert_allclose(cloudy, earth, atol=1e-6)
+
+    def test_day_cloud_coverage_survives_when_visible_light_fades(self):
+        base = np.zeros((32, 32, 4), dtype=np.float32)
+        visible = np.zeros_like(base)
+        infrared = np.zeros_like(base)
+        base[..., 3] = visible[..., 3] = infrared[..., 3] = 1.0
+        infrared[..., :3] = 0.9
+        cloud = _cloud_alpha(
+            visible, infrared, base, np.ones((32, 32), dtype=np.float32)
+        )
+        self.assertGreater(float(cloud[16, 16]), 0.55)
+
     def test_display_grade_separates_day_and_night(self):
         source = np.full((1, 1, 3), 0.35, dtype=np.float32)
         day = _apple_natural_grade(
@@ -254,6 +310,12 @@ class CoreTests(unittest.TestCase):
         np.testing.assert_allclose(day, earth, atol=1e-6)
         self.assertLess(float(cloudy[4, 4].mean()), float(night[4, 4].mean()) * 0.3)
 
+    def test_city_light_core_remains_crisp(self):
+        lights = np.zeros((15, 15, 4), dtype=np.float32)
+        lights[7, 7] = (1.0, 1.0, 0.55, 1.0)
+        signal = _city_light_signal(lights)
+        self.assertGreater(float(signal[7, 7]), float(signal[7, 8]) * 3.0)
+
     def test_warm_lights_are_not_classified_as_night_clouds(self):
         satellite = np.array([[[0.95, 0.62, 0.12]]], dtype=np.float32)
         cloud = _night_cloud_alpha(satellite, np.zeros((1, 1), dtype=np.float32))
@@ -274,7 +336,7 @@ class CoreTests(unittest.TestCase):
         ).reshape(1, 2, 3)
         alpha = np.array([[0.42, 0.92]], dtype=np.float32)
         color, mix = _fallback_cloud_appearance(
-            visible, alpha, np.ones((1, 2), dtype=np.float32)
+            visible, visible, alpha, np.ones((1, 2), dtype=np.float32)
         )
 
         self.assertGreater(float(color[0, 1].mean()), float(color[0, 0].mean()) + 0.2)

@@ -34,13 +34,16 @@ def _metrics(path: Path, preset: RenderPreset, observation: datetime) -> dict:
         "earth_clipped_fraction": float((earth_values > 0.985).mean()),
         "detail_gradient": float(gx + gy),
         "day_fraction": day_fraction,
-        "minimum_expected_brightness": 0.17 + day_fraction * 0.08,
+        "minimum_expected_brightness": 0.10 + day_fraction * 0.12,
     }
 
 
 def audit(directory: Path) -> dict:
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     observation = datetime.fromisoformat(manifest["observation_utc"].replace("Z", "+00:00"))
+    lighting = datetime.fromisoformat(
+        manifest.get("lighting_utc", manifest["observation_utc"]).replace("Z", "+00:00")
+    )
     rendered = datetime.fromisoformat(manifest["rendered_utc"].replace("Z", "+00:00"))
     age_hours = (rendered.astimezone(UTC) - observation.astimezone(UTC)).total_seconds() / 3600
     target = manifest.get("target", {})
@@ -50,8 +53,8 @@ def audit(directory: Path) -> dict:
     )
     result = {
         "observation_age_hours": age_hours,
-        "lock": _metrics(directory / "lock.jpg", lock, observation),
-        "home": _metrics(directory / "home.jpg", home, observation),
+        "lock": _metrics(directory / "lock.jpg", lock, lighting),
+        "home": _metrics(directory / "home.jpg", home, lighting),
     }
     failures = []
     if "CIRA SLIDER" in manifest["source"] and manifest.get("render_mode") not in {

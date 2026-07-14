@@ -18,7 +18,8 @@ ACKNOWLEDGEMENT = (
     "Satellite imagery: Korea Meteorological Administration (KMA), "
     "Japan Meteorological Agency (JMA), NOAA/NESDIS, "
     "and Colorado State University/CIRA, processed through CIRA SLIDER. "
-    "Static Earth and city-light imagery: NASA Earth Observatory/GIBS."
+    "Static Earth and city-light imagery: NASA Earth Observatory/GIBS. "
+    "Terrain relief: NASA/METI ASTER GDEM through NASA GIBS."
 )
 
 
@@ -207,6 +208,45 @@ def _sharpen_cloud_texture(
     return np.clip(earth + detail * strength, 0.0, 1.0)
 
 
+def _apply_terrain_relief(
+    earth: np.ndarray,
+    relief: np.ndarray,
+    cloud_alpha: np.ndarray,
+    day: np.ndarray,
+) -> np.ndarray:
+    """Add restrained ASTER terrain shading without embossing oceans or clouds."""
+    gray = np.sum(
+        relief[..., :3] * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+    )
+    gray_image = Image.fromarray(np.uint8(np.clip(gray, 0.0, 1.0) * 255), "L")
+    fine_local = np.asarray(
+        gray_image.filter(ImageFilter.GaussianBlur(2.0)), dtype=np.float32
+    ) / 255.0
+    broad_local = np.asarray(
+        gray_image.filter(ImageFilter.GaussianBlur(11.0)), dtype=np.float32
+    ) / 255.0
+    terrain_detail = np.clip(
+        (gray - fine_local) * 2.0 + (gray - broad_local) * 1.35,
+        -0.18,
+        0.18,
+    )
+
+    land = smoothstep(0.50, 0.64, gray)
+    land_image = Image.fromarray(np.uint8(land * 255), "L")
+    land_core = np.asarray(
+        land_image.filter(ImageFilter.MinFilter(11)), dtype=np.float32
+    ) / 255.0
+    cloud_visibility = 1.0 - smoothstep(0.10, 0.72, cloud_alpha)
+    light_visibility = 0.34 + 0.66 * smoothstep(0.04, 0.72, day)
+    strength = land_core * cloud_visibility * light_visibility
+    return np.clip(
+        earth * (1.0 + terrain_detail[..., None] * strength[..., None]),
+        0.0,
+        1.0,
+    )
+
+
 def _feather_coverage(alpha: np.ndarray, radius: float = 96.0) -> np.ndarray:
     """Hide rectangular WMS coverage edges without changing cloud texture."""
     image = Image.fromarray(np.uint8(np.clip(alpha, 0.0, 1.0) * 255), "L")
@@ -225,10 +265,13 @@ def _city_light_signal(lights: np.ndarray) -> np.ndarray:
     warm_radiance = np.clip(
         (rgb[..., 0] + rgb[..., 1]) * 0.5 - rgb[..., 2] * 0.56, 0.0, 1.0
     )
-    core = np.power(smoothstep(0.045, 0.76, warm_radiance), 1.28)
+    core = np.power(smoothstep(0.040, 0.70, warm_radiance), 1.22)
     glow_image = Image.fromarray(np.uint8(np.clip(core, 0.0, 1.0) * 255), "L")
-    glow = np.asarray(glow_image.filter(ImageFilter.GaussianBlur(1.8)), dtype=np.float32) / 255.0
-    return np.clip(core * 0.70 + glow * 0.38, 0.0, 1.0)
+    local = np.asarray(
+        glow_image.filter(ImageFilter.GaussianBlur(1.15)), dtype=np.float32
+    ) / 255.0
+    crisp_core = np.clip(core + (core - local) * 0.55, 0.0, 1.0)
+    return np.clip(crisp_core * 0.90 + local * 0.18, 0.0, 1.0)
 
 
 def _blend_city_lights(
@@ -257,19 +300,39 @@ def _cloud_alpha(visible: np.ndarray, infrared: np.ndarray, base: np.ndarray, da
     ir_sat = ir_rgb.max(axis=-1) - ir_rgb.min(axis=-1)
     ir_signal = np.maximum(smoothstep(0.10, 0.58, ir_sat), smoothstep(0.59, 0.88, ir_luma))
     ir_signal *= _feather_coverage(infrared[..., 3])
-    cloud = vis_signal * day + ir_signal * (1.0 - day)
+    # Visible cloud reflectance fades rapidly near dusk. Infrared remains valid
+    # around the clock, so retain it as a restrained daytime coverage floor.
+    day_cloud = np.maximum(vis_signal, ir_signal * 0.72)
+    cloud = day_cloud * day + ir_signal * (1.0 - day)
     return np.clip(np.power(cloud, 0.82) * 0.92, 0.0, 0.94)
 
 
 def _fallback_cloud_appearance(
-    visible: np.ndarray, cloud_alpha: np.ndarray, day: np.ndarray
+    visible: np.ndarray,
+    infrared: np.ndarray,
+    cloud_alpha: np.ndarray,
+    day: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Preserve observed cloud optical depth instead of painting a flat white veil."""
     reflectance = smoothstep(0.06, 0.74, visible[..., :3].mean(axis=-1))
     reflected_detail = np.power(reflectance, 0.72)
 
-    day_tone = 0.40 + 0.48 * reflected_detail
-    night_tone = 0.25 + 0.46 * np.power(cloud_alpha, 0.84)
+    ir_rgb = infrared[..., :3]
+    ir_luma = ir_rgb.mean(axis=-1)
+    ir_chroma = ir_rgb.max(axis=-1) - ir_rgb.min(axis=-1)
+    thermal = np.maximum(
+        smoothstep(0.10, 0.62, ir_chroma),
+        smoothstep(0.55, 0.91, ir_luma),
+    )
+    thermal_image = Image.fromarray(np.uint8(thermal * 255), "L")
+    thermal_local = np.asarray(
+        thermal_image.filter(ImageFilter.GaussianBlur(1.15)), dtype=np.float32
+    ) / 255.0
+    thermal_detail = np.clip(thermal + (thermal - thermal_local) * 0.42, 0.0, 1.0)
+    observed_detail = np.maximum(reflected_detail, thermal_detail * 0.82)
+
+    day_tone = 0.38 + 0.50 * observed_detail
+    night_tone = 0.22 + 0.50 * observed_detail
     day_mix = smoothstep(0.08, 0.72, day)
     tone = night_tone * (1.0 - day_mix) + day_tone * day_mix
 
@@ -283,8 +346,8 @@ def _fallback_cloud_appearance(
 
     # Thin clouds remain translucent; bright convective tops become denser and
     # brighter. Both are driven by the satellite reflectance texture.
-    daytime_strength = 0.34 + 0.52 * reflected_detail
-    nighttime_strength = 0.66 + 0.12 * cloud_alpha
+    daytime_strength = 0.32 + 0.52 * observed_detail
+    nighttime_strength = 0.58 + 0.18 * observed_detail
     strength = nighttime_strength * (1.0 - day_mix) + daytime_strength * day_mix
     mix = np.clip(cloud_alpha * strength, 0.0, 0.82)
     return cloud_color, mix
@@ -295,16 +358,23 @@ def render_one(
     preset: RenderPreset,
     destination: Path,
     *,
+    lighting_time: datetime | None = None,
     background_asset: Path | None = Path("assets/space-background.jpg"),
     jpeg_quality: int = 96,
 ) -> None:
     base_map = _load(observation.base)
     lights_map = _load(observation.lights)
+    terrain_map = _load(observation.terrain) if observation.terrain else None
 
     lat, lon, mask, sz, vectors = camera_grid(preset)
     base = sample_equirectangular(base_map, lat, lon)
     lights = sample_equirectangular(lights_map, lat, lon)
-    day = daylight(vectors, observation.timestamp)
+    terrain = (
+        sample_equirectangular(terrain_map, lat, lon)
+        if terrain_map is not None
+        else None
+    )
+    day = daylight(vectors, lighting_time or datetime.now(UTC))
 
     base_earth = _grade_earth(base)
     illumination = 0.28 + 0.72 * np.power(day[..., None], 0.54)
@@ -360,10 +430,14 @@ def render_one(
         earth = base_earth
         cloud_alpha = _cloud_alpha(visible, infrared, base, day)
         cloud_detail_alpha = cloud_alpha
-        cloud_color, cloud_mix = _fallback_cloud_appearance(visible, cloud_alpha, day)
+        cloud_color, cloud_mix = _fallback_cloud_appearance(
+            visible, infrared, cloud_alpha, day
+        )
         earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
 
     earth = _apple_natural_grade(earth, day, sz)
+    if terrain is not None:
+        earth = _apply_terrain_relief(earth, terrain, cloud_detail_alpha, day)
     earth = _sharpen_cloud_texture(earth, cloud_detail_alpha)
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
 
@@ -387,13 +461,15 @@ def render_pair(
     target_latitude: float = SHANGHAI[0],
     target_longitude: float = SHANGHAI[1],
     target_name: str = "Shanghai",
+    lighting_time: datetime | None = None,
 ) -> dict:
     output.mkdir(parents=True, exist_ok=True)
+    lighting_time = lighting_time or datetime.now(UTC)
     artifacts = {}
     presets = presets_for_location(target_latitude, target_longitude)
     for preset in presets:
         path = output / f"{preset.name}.jpg"
-        render_one(observation, preset, path)
+        render_one(observation, preset, path, lighting_time=lighting_time)
         artifacts[preset.name] = {
             "file": path.name,
             "sha256": sha256(path),
@@ -404,9 +480,10 @@ def render_pair(
             },
         }
 
-    sun = sun_vector(observation.timestamp)
+    sun = sun_vector(lighting_time)
     manifest = {
         "observation_utc": observation.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "lighting_utc": lighting_time.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "rendered_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source": observation.source,
         "source_status": observation.status,
@@ -448,9 +525,11 @@ def render_mac_pair(
     target_latitude: float = SHANGHAI[0],
     target_longitude: float = SHANGHAI[1],
     target_name: str = "Shanghai",
+    lighting_time: datetime | None = None,
 ) -> dict:
     """Render native-resolution Mac assets without touching the phone outputs."""
     output.mkdir(parents=True, exist_ok=True)
+    lighting_time = lighting_time or datetime.now(UTC)
     artifacts = {}
     for preset in mac_presets_for_location(target_latitude, target_longitude):
         path = output / f"mac-{preset.name}.jpg"
@@ -458,6 +537,7 @@ def render_mac_pair(
             observation,
             preset,
             path,
+            lighting_time=lighting_time,
             background_asset=None,
             jpeg_quality=98,
         )
@@ -474,6 +554,7 @@ def render_mac_pair(
     manifest = {
         "profile": "mac",
         "observation_utc": observation.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "lighting_utc": lighting_time.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "rendered_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source": observation.source,
         "source_status": observation.status,
