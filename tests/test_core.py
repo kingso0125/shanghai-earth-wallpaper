@@ -99,6 +99,28 @@ class CoreTests(unittest.TestCase):
             atol=1e-6,
         )
 
+    def test_geocolor_day_grade_rolls_off_only_neutral_cloud_highlights(self):
+        cloud = np.array([[[0.92, 0.92, 0.92]]], dtype=np.float32)
+        land = np.array([[[0.20, 0.50, 0.15]]], dtype=np.float32)
+        raw_cloud = np.power(np.clip(cloud * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        raw_cloud = np.clip(
+            raw_cloud * np.array([1.035, 1.01, 0.975], dtype=np.float32),
+            0.0,
+            1.0,
+        )
+
+        cloud_grade = _grade_geocolor(cloud, np.ones((1, 1), dtype=np.float32))
+        land_grade = _grade_geocolor(land, np.ones((1, 1), dtype=np.float32))
+
+        self.assertLess(float(cloud_grade.mean()), float(raw_cloud.mean()) * 0.90)
+        natural_grade = np.power(np.clip(land * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        natural_grade = np.clip(
+            natural_grade * np.array([1.035, 1.01, 0.975], dtype=np.float32),
+            0.0,
+            1.0,
+        )
+        np.testing.assert_allclose(land_grade, natural_grade, atol=1e-6)
+
     def test_city_lights_are_night_only_and_cloud_occluded(self):
         earth = np.zeros((9, 9, 3), dtype=np.float32)
         lights = np.zeros((9, 9, 4), dtype=np.float32)

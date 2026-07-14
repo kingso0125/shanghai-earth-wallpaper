@@ -41,6 +41,20 @@ def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
     graded = np.power(np.clip(rgb[..., :3] * 1.08 + 0.012, 0.0, 1.0), 0.90)
     graded *= np.array([1.035, 1.01, 0.975], dtype=np.float32)
     graded = np.clip(graded, 0.0, 1.0)
+    daytime = smoothstep(0.08, 0.72, day)[..., None]
+    cloud_luminance = np.sum(
+        graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+    )
+    cloud_chroma = graded.max(axis=-1) - graded.min(axis=-1)
+    cloud_highlight = (
+        smoothstep(0.56, 0.92, cloud_luminance)
+        * (1.0 - smoothstep(0.10, 0.28, cloud_chroma))
+    )[..., None]
+    # GeoColor already contains the observed cloud field. Roll off only its
+    # neutral daytime highlights so dense systems keep texture instead of
+    # clipping into an artificially opaque white mass.
+    graded *= 1.0 - cloud_highlight * daytime * 0.14
     initial_luminance = np.sum(
         graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
         axis=-1,
