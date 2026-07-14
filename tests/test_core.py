@@ -18,10 +18,11 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(HOME.size, (1320, 2868))
         self.assertGreater(HOME.globe_radius_px, LOCK.globe_radius_px)
 
-    def test_camera_center_is_shanghai_meridian(self):
-        lat, lon, visible, _, _ = camera_grid(LOCK)
-        x, y = map(int, LOCK.center_px)
-        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), 0.0, places=2)
+    def test_location_preset_places_shanghai_at_globe_center(self):
+        preset = presets_for_location(*SHANGHAI)[0]
+        lat, lon, visible, _, _ = camera_grid(preset)
+        x, y = map(int, preset.center_px)
+        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), SHANGHAI[0], places=2)
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), SHANGHAI[1], places=2)
         self.assertFalse(bool(visible[0, 0]))
 
@@ -29,7 +30,7 @@ class CoreTests(unittest.TestCase):
         guangzhou = presets_for_location(23.1291, 113.2644)[0]
         lat, lon, _, _, _ = camera_grid(guangzhou)
         x, y = map(int, guangzhou.center_px)
-        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), 0.0, places=2)
+        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), 23.1291, places=2)
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), 113.2644, places=2)
 
     def test_location_store_requires_more_than_80_km(self):

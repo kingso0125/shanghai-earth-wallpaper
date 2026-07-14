@@ -13,18 +13,24 @@ class RenderPreset:
     target_lon: float = SHANGHAI[1]
 
 
-LOCK = RenderPreset("lock", (1320, 2868), (660.0, 1470.0), 620.0, 0.0, SHANGHAI[1])
-HOME = RenderPreset("home", (1320, 2868), (660.0, 2440.0), 1500.0, 0.0, SHANGHAI[1])
+LOCK = RenderPreset(
+    "lock", (1320, 2868), (660.0, 1470.0), 620.0, SHANGHAI[0], SHANGHAI[1]
+)
+HOME = RenderPreset(
+    "home", (1320, 2868), (660.0, 2440.0), 1500.0, SHANGHAI[0], SHANGHAI[1]
+)
 PRESETS = (LOCK, HOME)
 
 
 def presets_for_location(latitude: float, longitude: float) -> tuple[RenderPreset, ...]:
-    """Keep the accepted composition while rotating the globe to the current meridian."""
+    """Keep the accepted crop while placing the current location at globe center."""
     if not -90.0 <= latitude <= 90.0:
         raise ValueError("latitude must be between -90 and 90")
     if not -180.0 <= longitude <= 180.0:
         raise ValueError("longitude must be between -180 and 180")
-    return tuple(replace(preset, target_lat=0.0, target_lon=longitude) for preset in PRESETS)
+    return tuple(
+        replace(preset, target_lat=latitude, target_lon=longitude) for preset in PRESETS
+    )
 
 GIBS_ENDPOINT = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"
 GIBS_CAPABILITIES = (

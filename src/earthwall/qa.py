@@ -57,6 +57,7 @@ def audit(directory: Path) -> dict:
     if "CIRA SLIDER" in manifest["source"] and manifest.get("render_mode") not in {
         "fused_geostationary_plate_shanghai_meridian",
         "fused_geostationary_plate_location_meridian",
+        "fused_geostationary_plate_location_centered",
     }:
         failures.append("CIRA observation was not transformed as one fused Earth/cloud plate")
     if manifest["source_status"] == "fresh" and not 0 <= age_hours <= 3.0:

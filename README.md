@@ -1,6 +1,6 @@
 # 实时地球壁纸
 
-每小时生成一组参考 Apple Astronomy Earth 质感的 iPhone Lock/Home 壁纸。主路径优先使用韩国 GK2A 原生全圆盘 GeoColor；默认镜头沿上海经线 121.4737°E 对准赤道，启用手机定位后则沿当前位置经线构图，同时保持云层和地表为同一张卫星观测。
+每小时生成一组参考 Apple Astronomy Earth 质感的 iPhone Lock/Home 壁纸。主路径优先使用韩国 GK2A 原生全圆盘 GeoColor；默认将上海坐标 31.2304°N、121.4737°E 放在地球球面的正中心，启用手机定位后则将当前坐标放在同一视觉锚点，同时保持云层和地表为同一张卫星观测。
 
 在线预览：<https://kingso0125.github.io/shanghai-earth-wallpaper/>
 

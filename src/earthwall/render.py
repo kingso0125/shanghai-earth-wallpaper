@@ -216,7 +216,7 @@ def render_pair(
         "source": observation.source,
         "source_status": observation.status,
         "render_mode": (
-            "fused_geostationary_plate_location_meridian"
+            "fused_geostationary_plate_location_centered"
             if observation.geocolor is not None
             else "equirectangular_cloud_fallback"
         ),
@@ -228,7 +228,10 @@ def render_pair(
             "latitude": target_latitude,
             "longitude": target_longitude,
         },
-        "view_center": {"latitude": 0.0, "longitude": target_longitude},
+        "view_center": {
+            "latitude": target_latitude,
+            "longitude": target_longitude,
+        },
         "sun_vector": [round(float(value), 7) for value in sun],
         "acknowledgement": ACKNOWLEDGEMENT,
         "night_lights": {
