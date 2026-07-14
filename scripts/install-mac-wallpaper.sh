@@ -7,6 +7,10 @@ logs="$HOME/Library/Logs/EarthwallMac"
 uid="$(id -u)"
 
 mkdir -p "${agent:h}" "$logs"
+rm -rf "$HOME/Library/Screen Savers/Earthwall.saver"
+/usr/bin/defaults -currentHost delete com.apple.screensaver moduleDict 2>/dev/null || true
+/usr/bin/defaults -currentHost delete com.apple.screensaver moduleName 2>/dev/null || true
+/usr/bin/defaults -currentHost delete com.apple.screensaver modulePath 2>/dev/null || true
 
 cat > "$agent" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
