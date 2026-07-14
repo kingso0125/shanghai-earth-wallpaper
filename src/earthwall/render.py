@@ -45,7 +45,7 @@ def _apple_natural_grade(
         axis=-1,
         keepdims=True,
     )
-    rgb = luminance + (rgb - luminance) * 0.91
+    rgb = luminance + (rgb - luminance) * 1.03
     rgb = np.power(np.clip(rgb, 0.0, 1.0), 0.93)
 
     daylight_mix = smoothstep(0.05, 0.78, day)[..., None]
@@ -78,9 +78,40 @@ def _apple_natural_grade(
         rgb[..., 2] - np.maximum(rgb[..., 0], rgb[..., 1]),
     )[..., None]
     ocean *= daylight_mix
-    ocean_balance = np.array([0.86, 1.20, 1.34], dtype=np.float32)
+    ocean_balance = np.array([0.86, 1.30, 1.34], dtype=np.float32)
     rgb *= 1.0 - ocean + ocean * ocean_balance
-    rgb += ocean * np.array([0.0, 0.025, 0.060], dtype=np.float32)
+    rgb += ocean * np.array([0.0, 0.050, 0.080], dtype=np.float32)
+
+    vegetation = smoothstep(
+        0.012,
+        0.125,
+        rgb[..., 1] - np.maximum(rgb[..., 0], rgb[..., 2]),
+    )[..., None]
+    vegetation *= daylight_mix * (1.0 - ocean)
+    vegetation_balance = np.array([0.88, 1.10, 1.13], dtype=np.float32)
+    rgb *= 1.0 - vegetation + vegetation * vegetation_balance
+    rgb += vegetation * np.array([0.0, 0.012, 0.022], dtype=np.float32)
+
+    warm_difference = rgb[..., 0] - rgb[..., 2]
+    gold_difference = rgb[..., 1] - rgb[..., 2]
+    desert = (
+        smoothstep(0.055, 0.24, warm_difference)
+        * smoothstep(0.018, 0.16, gold_difference)
+        * smoothstep(0.20, 0.62, display_luminance[..., 0])
+    )[..., None]
+    desert *= daylight_mix * (1.0 - ocean) * (1.0 - vegetation)
+    desert_balance = np.array([1.08, 1.09, 0.82], dtype=np.float32)
+    rgb *= 1.0 - desert + desert * desert_balance
+    rgb += desert * np.array([0.018, 0.024, 0.0], dtype=np.float32)
+
+    final_luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    final_chroma = rgb.max(axis=-1, keepdims=True) - rgb.min(axis=-1, keepdims=True)
+    saturation = 1.0 + smoothstep(0.025, 0.18, final_chroma) * daylight_mix * 0.12
+    rgb = final_luminance + (rgb - final_luminance) * saturation
 
     daylight_haze = daylight_mix * 0.025
     haze_tone = np.array([0.56, 0.70, 0.75], dtype=np.float32)
@@ -149,6 +180,31 @@ def _night_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
     neutral_brightness = np.clip(luminance - chroma * 0.70, 0.0, 1.0)
     night = 1.0 - smoothstep(0.08, 0.72, day)
     return smoothstep(0.11, 0.66, neutral_brightness) * night
+
+
+def _day_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
+    """Estimate neutral daytime cloud coverage only for local detail enhancement."""
+    rgb = satellite[..., :3]
+    luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1
+    )
+    chroma = rgb.max(axis=-1) - rgb.min(axis=-1)
+    neutral = 1.0 - smoothstep(0.09, 0.26, chroma)
+    daylight = smoothstep(0.08, 0.72, day)
+    return smoothstep(0.30, 0.82, luminance) * neutral * daylight
+
+
+def _sharpen_cloud_texture(
+    earth: np.ndarray, cloud_alpha: np.ndarray
+) -> np.ndarray:
+    """Sharpen observed cloud texture locally without changing cloud geometry."""
+    image = Image.fromarray(np.uint8(np.clip(earth, 0.0, 1.0) * 255), "RGB")
+    blurred = np.asarray(
+        image.filter(ImageFilter.GaussianBlur(1.25)), dtype=np.float32
+    ) / 255.0
+    detail = earth - blurred
+    strength = smoothstep(0.12, 0.78, cloud_alpha)[..., None] * 0.52
+    return np.clip(earth + detail * strength, 0.0, 1.0)
 
 
 def _feather_coverage(alpha: np.ndarray, radius: float = 96.0) -> np.ndarray:
@@ -255,6 +311,7 @@ def render_one(
     base_earth *= illumination
 
     cloud_alpha = np.zeros_like(day)
+    cloud_detail_alpha = np.zeros_like(day)
 
     if observation.geocolor is not None:
         geocolor_map = _load(observation.geocolor)
@@ -263,6 +320,9 @@ def render_one(
         )
         day_earth = _grade_geocolor(satellite, day)
         cloud_alpha = _night_cloud_alpha(satellite, day)
+        cloud_detail_alpha = np.maximum(
+            cloud_alpha, _day_cloud_alpha(satellite, day)
+        )
         cloud_luminance = np.sum(
             satellite[..., :3]
             * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
@@ -299,10 +359,12 @@ def render_one(
         infrared = sample_equirectangular(infrared_map, lat, lon)
         earth = base_earth
         cloud_alpha = _cloud_alpha(visible, infrared, base, day)
+        cloud_detail_alpha = cloud_alpha
         cloud_color, cloud_mix = _fallback_cloud_appearance(visible, cloud_alpha, day)
         earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
 
     earth = _apple_natural_grade(earth, day, sz)
+    earth = _sharpen_cloud_texture(earth, cloud_detail_alpha)
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)

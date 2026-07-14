@@ -20,6 +20,7 @@ from earthwall.render import (
     _feather_coverage,
     _grade_geocolor,
     _night_cloud_alpha,
+    _sharpen_cloud_texture,
 )
 from earthwall.sources import CIRA_SOURCES, latest_common_time
 
@@ -198,6 +199,31 @@ class CoreTests(unittest.TestCase):
         )
         self.assertGreater(float(graded[0, 0, 2]), float(graded[0, 0, 1]) * 1.6)
         self.assertGreater(float(graded[0, 0, 1]), float(graded[0, 0, 0]))
+        self.assertGreater(float(graded.mean()), float(ocean.mean()) * 1.25)
+
+    def test_display_grade_maps_vegetation_to_teal_and_desert_to_gold(self):
+        source = np.array(
+            [[[0.12, 0.42, 0.17], [0.58, 0.43, 0.22]]], dtype=np.float32
+        )
+        graded = _apple_natural_grade(
+            source,
+            np.ones((1, 2), dtype=np.float32),
+            np.ones((1, 2), dtype=np.float32),
+        )
+        vegetation, desert = graded[0]
+        self.assertGreater(float(vegetation[1]), float(vegetation[0]) * 1.25)
+        self.assertGreater(float(vegetation[2]), float(source[0, 0, 2]))
+        self.assertGreater(float(desert[0]), float(desert[2]) * 1.8)
+        self.assertGreater(float(desert[1]), float(desert[2]) * 1.4)
+
+    def test_cloud_sharpening_increases_local_detail_only_inside_cloud_mask(self):
+        earth = np.full((9, 9, 3), 0.35, dtype=np.float32)
+        earth[4, 4] = 0.75
+        mask = np.zeros((9, 9), dtype=np.float32)
+        mask[2:7, 2:7] = 1.0
+        sharpened = _sharpen_cloud_texture(earth, mask)
+        self.assertGreater(float(sharpened[4, 4].mean()), float(earth[4, 4].mean()))
+        np.testing.assert_allclose(sharpened[0, 0], earth[0, 0], atol=1e-6)
 
     def test_display_grade_separates_day_and_night(self):
         source = np.full((1, 1, 3), 0.35, dtype=np.float32)
