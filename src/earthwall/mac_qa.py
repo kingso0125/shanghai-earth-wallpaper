@@ -9,9 +9,11 @@ import numpy as np
 from PIL import Image
 
 from .config import mac_presets_for_location
+from .geometry import camera_grid
+from .lighting import daylight
 
 
-def _metrics(path: Path, preset) -> dict:
+def _metrics(path: Path, preset, lighting: datetime) -> dict:
     rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     if (rgb.shape[1], rgb.shape[0]) != preset.size:
         raise ValueError(f"{path} has incorrect dimensions")
@@ -24,6 +26,8 @@ def _metrics(path: Path, preset) -> dict:
     space_mask = ~earth_mask
     earth = luminance[earth_mask]
     space = luminance[space_mask]
+    _, _, visible, _, vectors = camera_grid(preset)
+    day_fraction = float(daylight(vectors, lighting)[visible].mean())
     return {
         "earth_mean": float(earth.mean()),
         "earth_p95": float(np.percentile(earth, 95)),
@@ -34,6 +38,8 @@ def _metrics(path: Path, preset) -> dict:
             np.abs(np.diff(luminance, axis=1)).mean()
             + np.abs(np.diff(luminance, axis=0)).mean()
         ),
+        "day_fraction": day_fraction,
+        "minimum_expected_brightness": 0.08 + day_fraction * 0.12,
         "globe_fully_visible": bool(
             cx - preset.globe_radius_px >= 0
             and cy - preset.globe_radius_px >= 0
@@ -46,6 +52,9 @@ def _metrics(path: Path, preset) -> dict:
 def audit(directory: Path) -> dict:
     manifest = json.loads((directory / "mac-manifest.json").read_text(encoding="utf-8"))
     observation = datetime.fromisoformat(manifest["observation_utc"].replace("Z", "+00:00"))
+    lighting = datetime.fromisoformat(
+        manifest.get("lighting_utc", manifest["observation_utc"]).replace("Z", "+00:00")
+    )
     rendered = datetime.fromisoformat(manifest["rendered_utc"].replace("Z", "+00:00"))
     age_hours = (rendered.astimezone(UTC) - observation.astimezone(UTC)).total_seconds() / 3600
     target = manifest["target"]
@@ -53,13 +62,13 @@ def audit(directory: Path) -> dict:
     result = {"observation_age_hours": age_hours}
     failures = []
     for preset in presets:
-        metrics = _metrics(directory / f"mac-{preset.name}.jpg", preset)
+        metrics = _metrics(directory / f"mac-{preset.name}.jpg", preset, lighting)
         result[preset.name] = metrics
         if preset.name == "lock" and not metrics["globe_fully_visible"]:
             failures.append(f"mac {preset.name} globe is cropped")
         if preset.name == "home" and metrics["globe_fully_visible"]:
             failures.append("mac home should use the close-up hemisphere composition")
-        if not 0.12 <= metrics["earth_mean"] <= 0.70:
+        if not metrics["minimum_expected_brightness"] <= metrics["earth_mean"] <= 0.70:
             failures.append(f"mac {preset.name} Earth brightness is outside target")
         if metrics["earth_clipped_fraction"] > 0.10:
             failures.append(f"mac {preset.name} has excessive highlight clipping")

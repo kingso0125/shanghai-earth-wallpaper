@@ -251,8 +251,13 @@ class CoreTests(unittest.TestCase):
         earth[4, 4] = 0.75
         mask = np.zeros((9, 9), dtype=np.float32)
         mask[2:7, 2:7] = 1.0
-        sharpened = _sharpen_cloud_texture(earth, mask)
+        sharpened = _sharpen_cloud_texture(earth, mask, np.ones((9, 9), dtype=np.float32))
+        night = _sharpen_cloud_texture(earth, mask, np.zeros((9, 9), dtype=np.float32))
         self.assertGreater(float(sharpened[4, 4].mean()), float(earth[4, 4].mean()))
+        self.assertGreater(
+            float(sharpened[4, 4].mean() - earth[4, 4].mean()),
+            float(night[4, 4].mean() - earth[4, 4].mean()) * 3.0,
+        )
         np.testing.assert_allclose(sharpened[0, 0], earth[0, 0], atol=1e-6)
 
     def test_terrain_relief_adds_land_detail_but_stays_below_clouds(self):
@@ -342,6 +347,18 @@ class CoreTests(unittest.TestCase):
         self.assertGreater(float(color[0, 1].mean()), float(color[0, 0].mean()) + 0.2)
         self.assertGreater(float(mix[0, 1]), float(mix[0, 0]) + 0.4)
         self.assertGreater(float(color[0, 1, 0]), float(color[0, 1, 2]))
+
+    def test_fallback_night_clouds_are_subtle_and_translucent(self):
+        source = np.full((5, 5, 3), 0.82, dtype=np.float32)
+        alpha = np.full((5, 5), 0.9, dtype=np.float32)
+        day_color, day_mix = _fallback_cloud_appearance(
+            source, source, alpha, np.ones((5, 5), dtype=np.float32)
+        )
+        night_color, night_mix = _fallback_cloud_appearance(
+            source, source, alpha, np.zeros((5, 5), dtype=np.float32)
+        )
+        self.assertLess(float(night_color.mean()), float(day_color.mean()) * 0.45)
+        self.assertLess(float(night_mix.mean()), float(day_mix.mean()) * 0.75)
 
 
 if __name__ == "__main__":

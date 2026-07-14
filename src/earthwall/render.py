@@ -196,7 +196,7 @@ def _day_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
 
 
 def _sharpen_cloud_texture(
-    earth: np.ndarray, cloud_alpha: np.ndarray
+    earth: np.ndarray, cloud_alpha: np.ndarray, day: np.ndarray
 ) -> np.ndarray:
     """Sharpen observed cloud texture locally without changing cloud geometry."""
     image = Image.fromarray(np.uint8(np.clip(earth, 0.0, 1.0) * 255), "RGB")
@@ -204,7 +204,10 @@ def _sharpen_cloud_texture(
         image.filter(ImageFilter.GaussianBlur(1.25)), dtype=np.float32
     ) / 255.0
     detail = earth - blurred
-    strength = smoothstep(0.12, 0.78, cloud_alpha)[..., None] * 0.52
+    daylight_strength = 0.16 + 0.84 * smoothstep(0.08, 0.70, day)
+    strength = (
+        smoothstep(0.12, 0.78, cloud_alpha) * daylight_strength
+    )[..., None] * 0.52
     return np.clip(earth + detail * strength, 0.0, 1.0)
 
 
@@ -332,12 +335,12 @@ def _fallback_cloud_appearance(
     observed_detail = np.maximum(reflected_detail, thermal_detail * 0.82)
 
     day_tone = 0.38 + 0.50 * observed_detail
-    night_tone = 0.22 + 0.50 * observed_detail
+    night_tone = 0.12 + 0.30 * observed_detail
     day_mix = smoothstep(0.08, 0.72, day)
     tone = night_tone * (1.0 - day_mix) + day_tone * day_mix
 
     day_color = np.array([1.02, 1.00, 0.97], dtype=np.float32)
-    night_color = np.array([0.88, 0.92, 0.98], dtype=np.float32)
+    night_color = np.array([0.66, 0.73, 0.82], dtype=np.float32)
     color_balance = (
         night_color[None, None, :] * (1.0 - day_mix[..., None])
         + day_color[None, None, :] * day_mix[..., None]
@@ -347,9 +350,14 @@ def _fallback_cloud_appearance(
     # Thin clouds remain translucent; bright convective tops become denser and
     # brighter. Both are driven by the satellite reflectance texture.
     daytime_strength = 0.32 + 0.52 * observed_detail
-    nighttime_strength = 0.58 + 0.18 * observed_detail
+    nighttime_strength = 0.30 + 0.30 * observed_detail
     strength = nighttime_strength * (1.0 - day_mix) + daytime_strength * day_mix
-    mix = np.clip(cloud_alpha * strength, 0.0, 0.82)
+    alpha_image = Image.fromarray(np.uint8(np.clip(cloud_alpha, 0.0, 1.0) * 255), "L")
+    softened_alpha = np.asarray(
+        alpha_image.filter(ImageFilter.GaussianBlur(1.15)), dtype=np.float32
+    ) / 255.0
+    appearance_alpha = softened_alpha * (1.0 - day_mix) + cloud_alpha * day_mix
+    mix = np.clip(appearance_alpha * strength, 0.0, 0.82)
     return cloud_color, mix
 
 
@@ -398,9 +406,9 @@ def render_one(
             * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
             axis=-1,
         )
-        cloud_brightness = 0.28 + 0.62 * smoothstep(0.08, 0.78, cloud_luminance)
+        cloud_brightness = 0.15 + 0.31 * smoothstep(0.08, 0.78, cloud_luminance)
         cloud_color = cloud_brightness[..., None] * np.array(
-            [0.92, 0.91, 0.90], dtype=np.float32
+            [0.68, 0.75, 0.84], dtype=np.float32
         )
         night_luminance = np.sum(
             base_earth * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
@@ -417,8 +425,8 @@ def render_one(
         ocean_tint = np.array([0.96, 1.00, 1.07], dtype=np.float32)
         night_surface *= land_tint * (1.0 - ocean_weight) + ocean_tint * ocean_weight
         night_surface = np.power(np.clip(night_surface * 1.24 + 0.008, 0.0, 1.0), 0.90)
-        night_earth = night_surface * (1.0 - cloud_alpha[..., None] * 0.70)
-        night_earth += cloud_color * cloud_alpha[..., None] * 0.70
+        night_earth = night_surface * (1.0 - cloud_alpha[..., None] * 0.52)
+        night_earth += cloud_color * cloud_alpha[..., None] * 0.48
         day_mix = smoothstep(0.08, 0.72, day)[..., None]
         earth = night_earth * (1.0 - day_mix) + day_earth * day_mix
         earth = np.where(source_valid[..., None], earth, base_earth)
@@ -438,7 +446,7 @@ def render_one(
     earth = _apple_natural_grade(earth, day, sz)
     if terrain is not None:
         earth = _apply_terrain_relief(earth, terrain, cloud_detail_alpha, day)
-    earth = _sharpen_cloud_texture(earth, cloud_detail_alpha)
+    earth = _sharpen_cloud_texture(earth, cloud_detail_alpha, day)
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)

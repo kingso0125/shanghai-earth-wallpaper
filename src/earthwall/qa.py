@@ -34,7 +34,7 @@ def _metrics(path: Path, preset: RenderPreset, observation: datetime) -> dict:
         "earth_clipped_fraction": float((earth_values > 0.985).mean()),
         "detail_gradient": float(gx + gy),
         "day_fraction": day_fraction,
-        "minimum_expected_brightness": 0.10 + day_fraction * 0.12,
+        "minimum_expected_brightness": 0.08 + day_fraction * 0.12,
     }
 
 
