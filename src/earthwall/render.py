@@ -88,6 +88,12 @@ def _night_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
     return smoothstep(0.11, 0.66, neutral_brightness) * night
 
 
+def _feather_coverage(alpha: np.ndarray, radius: float = 96.0) -> np.ndarray:
+    """Hide rectangular WMS coverage edges without changing cloud texture."""
+    image = Image.fromarray(np.uint8(np.clip(alpha, 0.0, 1.0) * 255), "L")
+    return np.asarray(image.filter(ImageFilter.GaussianBlur(radius)), dtype=np.float32) / 255.0
+
+
 def _city_light_signal(lights: np.ndarray) -> np.ndarray:
     """Isolate measured VIIRS light emission from the blue night-map background."""
     rgb = lights[..., :3]
@@ -119,13 +125,13 @@ def _cloud_alpha(visible: np.ndarray, infrared: np.ndarray, base: np.ndarray, da
     vis_luma = visible[..., :3].mean(axis=-1)
     base_luma = base[..., :3].mean(axis=-1)
     vis_signal = smoothstep(0.055, 0.42, vis_luma - base_luma * 0.31)
-    vis_signal *= visible[..., 3]
+    vis_signal *= _feather_coverage(visible[..., 3])
 
     ir_rgb = infrared[..., :3]
     ir_luma = ir_rgb.mean(axis=-1)
     ir_sat = ir_rgb.max(axis=-1) - ir_rgb.min(axis=-1)
     ir_signal = np.maximum(smoothstep(0.10, 0.58, ir_sat), smoothstep(0.59, 0.88, ir_luma))
-    ir_signal *= infrared[..., 3]
+    ir_signal *= _feather_coverage(infrared[..., 3])
     cloud = vis_signal * day + ir_signal * (1.0 - day)
     return np.clip(np.power(cloud, 0.82) * 0.92, 0.0, 0.94)
 

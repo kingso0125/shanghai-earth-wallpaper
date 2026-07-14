@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace
 
 SHANGHAI = (31.2304, 121.4737)
+LOCK_LATITUDE_OFFSET = -6.0
 
 
 @dataclass(frozen=True)
@@ -14,7 +15,12 @@ class RenderPreset:
 
 
 LOCK = RenderPreset(
-    "lock", (1320, 2868), (660.0, 1470.0), 620.0, SHANGHAI[0], SHANGHAI[1]
+    "lock",
+    (1320, 2868),
+    (660.0, 1470.0),
+    620.0,
+    SHANGHAI[0] + LOCK_LATITUDE_OFFSET,
+    SHANGHAI[1],
 )
 HOME = RenderPreset(
     "home", (1320, 2868), (660.0, 2440.0), 1500.0, 0.0, SHANGHAI[1]
@@ -31,7 +37,11 @@ def presets_for_location(latitude: float, longitude: float) -> tuple[RenderPrese
     return tuple(
         replace(
             preset,
-            target_lat=latitude if preset.name == "lock" else 0.0,
+            target_lat=(
+                max(-90.0, min(90.0, latitude + LOCK_LATITUDE_OFFSET))
+                if preset.name == "lock"
+                else 0.0
+            ),
             target_lon=longitude,
         )
         for preset in PRESETS

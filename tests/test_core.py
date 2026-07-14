@@ -3,11 +3,22 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from earthwall.config import HOME, LOCK, SHANGHAI, presets_for_location
+from earthwall.config import (
+    HOME,
+    LOCK,
+    LOCK_LATITUDE_OFFSET,
+    SHANGHAI,
+    presets_for_location,
+)
 from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
 from earthwall.location import Location, LocationStore, haversine_km
-from earthwall.render import _blend_city_lights, _grade_geocolor, _night_cloud_alpha
+from earthwall.render import (
+    _blend_city_lights,
+    _feather_coverage,
+    _grade_geocolor,
+    _night_cloud_alpha,
+)
 from earthwall.sources import CIRA_SOURCES, latest_common_time
 
 
@@ -18,12 +29,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(HOME.size, (1320, 2868))
         self.assertGreater(HOME.globe_radius_px, LOCK.globe_radius_px)
 
-    def test_location_preset_places_shanghai_at_globe_center(self):
+    def test_lock_places_shanghai_slightly_above_globe_center(self):
         preset = presets_for_location(*SHANGHAI)[0]
         lat, lon, visible, _, _ = camera_grid(preset)
         x, y = map(int, preset.center_px)
-        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), SHANGHAI[0], places=2)
+        self.assertAlmostEqual(
+            float(np.rad2deg(lat[y, x])),
+            SHANGHAI[0] + LOCK_LATITUDE_OFFSET,
+            places=2,
+        )
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), SHANGHAI[1], places=2)
+        shanghai_y = preset.center_px[1] - preset.globe_radius_px * np.sin(
+            np.deg2rad(-LOCK_LATITUDE_OFFSET)
+        )
+        self.assertGreater(shanghai_y, 1390)
+        self.assertLess(shanghai_y, 1420)
         self.assertFalse(bool(visible[0, 0]))
 
     def test_home_keeps_shanghai_above_the_bottom_controls(self):
@@ -39,7 +59,9 @@ class CoreTests(unittest.TestCase):
         guangzhou = presets_for_location(23.1291, 113.2644)[0]
         lat, lon, _, _, _ = camera_grid(guangzhou)
         x, y = map(int, guangzhou.center_px)
-        self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), 23.1291, places=2)
+        self.assertAlmostEqual(
+            float(np.rad2deg(lat[y, x])), 23.1291 + LOCK_LATITUDE_OFFSET, places=2
+        )
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), 113.2644, places=2)
 
     def test_location_store_requires_more_than_80_km(self):
@@ -157,6 +179,13 @@ class CoreTests(unittest.TestCase):
         satellite = np.array([[[0.95, 0.62, 0.12]]], dtype=np.float32)
         cloud = _night_cloud_alpha(satellite, np.zeros((1, 1), dtype=np.float32))
         self.assertLess(float(cloud[0, 0]), 0.15)
+
+    def test_fallback_cloud_coverage_edge_is_feathered(self):
+        alpha = np.zeros((101, 101), dtype=np.float32)
+        alpha[:, 50:] = 1.0
+        feathered = _feather_coverage(alpha, radius=8.0)
+        self.assertGreater(float(feathered[50, 45]), 0.0)
+        self.assertLess(float(feathered[50, 55]), 1.0)
 
 
 if __name__ == "__main__":
