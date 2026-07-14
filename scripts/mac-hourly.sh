@@ -9,6 +9,19 @@ current="$state/current"
 wallpapers="$state/wallpapers"
 mkdir -p "$cache" "$current" "$wallpapers"
 
+# Read-only source synchronization: the server already validates the freshest
+# phone observation. Mac still renders its own independent composition.
+source_host="${EARTHWALL_SOURCE_HOST:-root@47.116.45.167}"
+latest_visible="$(/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=8 "$source_host" \
+  "ls -1t /var/cache/earthwall/himawari-*-visible.png 2>/dev/null | head -1" 2>/dev/null || true)"
+if [[ -n "$latest_visible" ]]; then
+  latest_infrared="${latest_visible%-visible.png}-infrared.png"
+  /usr/bin/scp -q -o BatchMode=yes -o ConnectTimeout=8 \
+    "$source_host:$latest_visible" "$source_host:$latest_infrared" \
+    "$source_host:/srv/earthwall/current/manifest.json" "$cache/" 2>/dev/null || true
+  [[ -f "$cache/manifest.json" ]] && /bin/mv -f "$cache/manifest.json" "$cache/server-manifest.json"
+fi
+
 work="$(mktemp -d "$state/render.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
