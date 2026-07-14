@@ -27,6 +27,25 @@ HOME = RenderPreset(
 )
 PRESETS = (LOCK, HOME)
 
+MAC_SIZE = (2560, 1664)
+MAC_LOCK = RenderPreset(
+    "lock",
+    MAC_SIZE,
+    (1280.0, 900.0),
+    560.0,
+    SHANGHAI[0] + LOCK_LATITUDE_OFFSET,
+    SHANGHAI[1],
+)
+MAC_HOME = RenderPreset(
+    "home",
+    MAC_SIZE,
+    (1280.0, 1280.0),
+    1070.0,
+    0.0,
+    SHANGHAI[1],
+)
+MAC_PRESETS = (MAC_LOCK, MAC_HOME)
+
 
 def presets_for_location(latitude: float, longitude: float) -> tuple[RenderPreset, ...]:
     """Center Lock on location; keep Home on the clearer equatorial camera angle."""
@@ -45,6 +64,28 @@ def presets_for_location(latitude: float, longitude: float) -> tuple[RenderPrese
             target_lon=longitude,
         )
         for preset in PRESETS
+    )
+
+
+def mac_presets_for_location(
+    latitude: float, longitude: float
+) -> tuple[RenderPreset, ...]:
+    """Keep the Mac outputs independent and centered on the requested location."""
+    if not -90.0 <= latitude <= 90.0:
+        raise ValueError("latitude must be between -90 and 90")
+    if not -180.0 <= longitude <= 180.0:
+        raise ValueError("longitude must be between -180 and 180")
+    return tuple(
+        replace(
+            preset,
+            target_lat=(
+                max(-90.0, min(90.0, latitude + LOCK_LATITUDE_OFFSET))
+                if preset.name == "lock"
+                else 0.0
+            ),
+            target_lon=longitude,
+        )
+        for preset in MAC_PRESETS
     )
 
 GIBS_ENDPOINT = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi"

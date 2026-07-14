@@ -14,6 +14,7 @@ from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
 from earthwall.location import Location, LocationStore, haversine_km
 from earthwall.render import (
+    _apple_natural_grade,
     _blend_city_lights,
     _fallback_cloud_appearance,
     _feather_coverage,
@@ -114,7 +115,7 @@ class CoreTests(unittest.TestCase):
 
     def test_geocolor_night_grade_removes_infrared_purple(self):
         source = np.array([[[0.60, 0.10, 0.80]]], dtype=np.float32)
-        raw_grade = np.power(np.clip(source * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        raw_grade = np.power(np.clip(source * 1.035 + 0.010, 0.0, 1.0), 0.95)
         night = _grade_geocolor(source, np.zeros((1, 1), dtype=np.float32))
         day = _grade_geocolor(source, np.ones((1, 1), dtype=np.float32))
 
@@ -123,9 +124,16 @@ class CoreTests(unittest.TestCase):
         self.assertLess(float(np.ptp(day[0, 0])), float(np.ptp(raw_grade[0, 0])) * 0.5)
 
         natural_land = np.array([[[0.20, 0.50, 0.15]]], dtype=np.float32)
-        natural_grade = np.power(np.clip(natural_land * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        natural_grade = np.power(np.clip(natural_land * 1.035 + 0.010, 0.0, 1.0), 0.95)
+        luminance = np.sum(
+            natural_grade
+            * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+            axis=-1,
+            keepdims=True,
+        )
+        natural_grade = luminance + (natural_grade - luminance) * 0.94
         natural_grade = np.clip(
-            natural_grade * np.array([1.035, 1.01, 0.975], dtype=np.float32),
+            natural_grade * np.array([1.035, 1.015, 0.975], dtype=np.float32),
             0.0,
             1.0,
         )
@@ -138,9 +146,15 @@ class CoreTests(unittest.TestCase):
     def test_geocolor_day_grade_rolls_off_only_neutral_cloud_highlights(self):
         cloud = np.array([[[0.92, 0.92, 0.92]]], dtype=np.float32)
         land = np.array([[[0.20, 0.50, 0.15]]], dtype=np.float32)
-        raw_cloud = np.power(np.clip(cloud * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        raw_cloud = np.power(np.clip(cloud * 1.035 + 0.010, 0.0, 1.0), 0.95)
+        raw_luminance = np.sum(
+            raw_cloud * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+            axis=-1,
+            keepdims=True,
+        )
+        raw_cloud = raw_luminance + (raw_cloud - raw_luminance) * 0.94
         raw_cloud = np.clip(
-            raw_cloud * np.array([1.035, 1.01, 0.975], dtype=np.float32),
+            raw_cloud * np.array([1.035, 1.015, 0.975], dtype=np.float32),
             0.0,
             1.0,
         )
@@ -149,13 +163,51 @@ class CoreTests(unittest.TestCase):
         land_grade = _grade_geocolor(land, np.ones((1, 1), dtype=np.float32))
 
         self.assertLess(float(cloud_grade.mean()), float(raw_cloud.mean()) * 0.90)
-        natural_grade = np.power(np.clip(land * 1.08 + 0.012, 0.0, 1.0), 0.90)
+        natural_grade = np.power(np.clip(land * 1.035 + 0.010, 0.0, 1.0), 0.95)
+        luminance = np.sum(
+            natural_grade
+            * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+            axis=-1,
+            keepdims=True,
+        )
+        natural_grade = luminance + (natural_grade - luminance) * 0.94
         natural_grade = np.clip(
-            natural_grade * np.array([1.035, 1.01, 0.975], dtype=np.float32),
+            natural_grade * np.array([1.035, 1.015, 0.975], dtype=np.float32),
             0.0,
             1.0,
         )
         np.testing.assert_allclose(land_grade, natural_grade, atol=1e-6)
+
+    def test_display_grade_warms_without_destroying_observed_structure(self):
+        source = np.array([[[0.42, 0.30, 0.18]]], dtype=np.float32)
+        graded = _apple_natural_grade(
+            source,
+            np.ones((1, 1), dtype=np.float32),
+            np.ones((1, 1), dtype=np.float32),
+        )
+        self.assertGreater(float(graded.mean()), float(source.mean()))
+        self.assertGreater(float(graded[0, 0, 0]), float(graded[0, 0, 2]) * 1.5)
+        self.assertGreater(float(np.ptp(graded[0, 0])), 0.20)
+
+    def test_display_grade_keeps_ocean_blue(self):
+        ocean = np.array([[[0.05, 0.12, 0.36]]], dtype=np.float32)
+        graded = _apple_natural_grade(
+            ocean,
+            np.ones((1, 1), dtype=np.float32),
+            np.ones((1, 1), dtype=np.float32),
+        )
+        self.assertGreater(float(graded[0, 0, 2]), float(graded[0, 0, 1]) * 1.6)
+        self.assertGreater(float(graded[0, 0, 1]), float(graded[0, 0, 0]))
+
+    def test_display_grade_separates_day_and_night(self):
+        source = np.full((1, 1, 3), 0.35, dtype=np.float32)
+        day = _apple_natural_grade(
+            source, np.ones((1, 1), dtype=np.float32), np.ones((1, 1), dtype=np.float32)
+        )
+        night = _apple_natural_grade(
+            source, np.zeros((1, 1), dtype=np.float32), np.ones((1, 1), dtype=np.float32)
+        )
+        self.assertGreater(float(day.mean()), float(night.mean()) * 1.35)
 
     def test_city_lights_are_night_only_and_cloud_occluded(self):
         earth = np.zeros((9, 9, 3), dtype=np.float32)

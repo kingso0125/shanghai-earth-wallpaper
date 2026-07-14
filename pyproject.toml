@@ -13,6 +13,8 @@ dependencies = ["numpy>=2.0", "Pillow>=11.0"]
 earthwall = "earthwall.cli:main"
 earthwall-qa = "earthwall.qa:main"
 earthwall-location-api = "earthwall.location_api:main"
+earthwall-mac = "earthwall.mac_cli:main"
+earthwall-mac-qa = "earthwall.mac_qa:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

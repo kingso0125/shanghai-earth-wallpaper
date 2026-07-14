@@ -20,6 +20,19 @@ earthwall-qa output/current
 
 - `output/current/lock.jpg`：1320×2868
 - `output/current/home.jpg`：1320×2868
+
+## Mac 实时地球
+
+Mac 使用独立的原生 2560×1664 输出、缓存和 LaunchAgent，不改动手机的
+`lock.jpg`、`home.jpg` 或云端定时任务：
+
+```bash
+./scripts/install-mac-wallpaper.sh
+```
+
+- 桌面：`mac-home.jpg`，类似手机 Home 的近景半球，上海位于屏幕视觉中心附近。
+- 锁屏：`mac-lock.jpg`，通过本地 Earthwall 屏保显示完整地球与星空。
+- 每小时 `:28` 更新，登录/唤醒后也会补跑；历史桌面图保留一天。
 - `output/current/manifest.json`：观测时间、数据状态、来源与文件哈希
 
 ## 每小时运行

@@ -63,7 +63,7 @@ def space_background(
 def atmosphere(mask: np.ndarray, sz: np.ndarray, size: tuple[int, int]):
     rim = np.power(np.clip(1.0 - sz, 0.0, 1.0), 7.0) * mask
     mask_image = Image.fromarray(np.uint8(mask * 255), "L")
-    blur = mask_image.filter(ImageFilter.GaussianBlur(radius=max(8, size[0] * 0.017)))
+    blur = mask_image.filter(ImageFilter.GaussianBlur(radius=max(10, size[0] * 0.022)))
     halo = np.asarray(blur, dtype=np.float32) / 255.0 - mask
     halo = np.clip(halo, 0.0, 1.0)
     return rim.astype(np.float32), halo.astype(np.float32)

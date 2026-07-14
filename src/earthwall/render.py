@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-from .config import SHANGHAI, RenderPreset, presets_for_location
+from .config import SHANGHAI, RenderPreset, mac_presets_for_location, presets_for_location
 from .geometry import camera_grid, sample_equirectangular, sample_geostationary_focus_plate
 from .lighting import daylight, sun_vector
 from .sources import Observation, sha256
@@ -36,10 +36,73 @@ def _grade_earth(rgb: np.ndarray) -> np.ndarray:
     return np.clip(rgb, 0.0, 1.0)
 
 
+def _apple_natural_grade(
+    rgb: np.ndarray, day: np.ndarray, sz: np.ndarray
+) -> np.ndarray:
+    """Apply a warm, filmic display transform without changing observed geography."""
+    luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    rgb = luminance + (rgb - luminance) * 0.91
+    rgb = np.power(np.clip(rgb, 0.0, 1.0), 0.93)
+
+    daylight_mix = smoothstep(0.05, 0.78, day)[..., None]
+    night_balance = np.array([1.025, 1.005, 0.985], dtype=np.float32)
+    day_balance = np.array([1.045, 1.018, 0.965], dtype=np.float32)
+    rgb *= night_balance * (1.0 - daylight_mix) + day_balance * daylight_mix
+
+    # Retain a physically legible day/night separation after the display tone map.
+    # Daylight opens the midtones; the night side remains deep enough for VIIRS
+    # lights to read clearly without inventing any illumination.
+    exposure = 0.74 + daylight_mix * 0.34
+    rgb *= exposure
+    rgb += daylight_mix * rgb * (1.0 - rgb) * 0.08
+
+    display_luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    shadow_lift = (1.0 - smoothstep(0.24, 0.58, display_luminance)) * daylight_mix * 0.055
+    rgb += (1.0 - rgb) * shadow_lift
+    highlight_rolloff = smoothstep(0.58, 0.92, display_luminance) * daylight_mix * 0.10
+    rgb *= 1.0 - highlight_rolloff
+
+    # Preserve the observed ocean mask, then restore the richer blue response
+    # that is lost when satellite RGB is compressed for display.
+    ocean = smoothstep(
+        0.012,
+        0.115,
+        rgb[..., 2] - np.maximum(rgb[..., 0], rgb[..., 1]),
+    )[..., None]
+    ocean *= daylight_mix
+    ocean_balance = np.array([0.86, 1.20, 1.34], dtype=np.float32)
+    rgb *= 1.0 - ocean + ocean * ocean_balance
+    rgb += ocean * np.array([0.0, 0.025, 0.060], dtype=np.float32)
+
+    daylight_haze = daylight_mix * 0.025
+    haze_tone = np.array([0.56, 0.70, 0.75], dtype=np.float32)
+    rgb = rgb * (1.0 - daylight_haze) + haze_tone * daylight_haze
+
+    # A small view-angle haze creates depth at the limb instead of a hard blue outline.
+    limb = np.power(np.clip(1.0 - sz, 0.0, 1.0), 2.4)[..., None]
+    haze_color = np.array([0.31, 0.53, 0.67], dtype=np.float32)
+    rgb = rgb * (1.0 - limb * 0.10) + haze_color * limb * 0.10
+    return np.clip(rgb, 0.0, 1.0)
+
+
 def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
     """Keep daytime GeoColor intact while neutralizing synthetic IR purple at night."""
-    graded = np.power(np.clip(rgb[..., :3] * 1.08 + 0.012, 0.0, 1.0), 0.90)
-    graded *= np.array([1.035, 1.01, 0.975], dtype=np.float32)
+    graded = np.power(np.clip(rgb[..., :3] * 1.035 + 0.010, 0.0, 1.0), 0.95)
+    luminance = np.sum(
+        graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    graded = luminance + (graded - luminance) * 0.94
+    graded *= np.array([1.035, 1.015, 0.975], dtype=np.float32)
     graded = np.clip(graded, 0.0, 1.0)
     daytime = smoothstep(0.08, 0.72, day)[..., None]
     cloud_luminance = np.sum(
@@ -54,7 +117,7 @@ def _grade_geocolor(rgb: np.ndarray, day: np.ndarray) -> np.ndarray:
     # GeoColor already contains the observed cloud field. Roll off only its
     # neutral daytime highlights so dense systems keep texture instead of
     # clipping into an artificially opaque white mass.
-    graded *= 1.0 - cloud_highlight * daytime * 0.14
+    graded *= 1.0 - cloud_highlight * daytime * 0.19
     initial_luminance = np.sum(
         graded * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
         axis=-1,
@@ -123,7 +186,7 @@ def _blend_city_lights(
     cloud_visibility = np.clip(1.0 - cloud_alpha * 0.86, 0.08, 1.0)
     strength = _city_light_signal(lights) * night * cloud_visibility
     light_color = np.array([1.0, 0.69, 0.32], dtype=np.float32)
-    overlay = np.clip(strength[..., None] * light_color * 0.86, 0.0, 0.88)
+    overlay = np.clip(strength[..., None] * light_color * 1.02, 0.0, 0.92)
     return np.clip(1.0 - (1.0 - earth) * (1.0 - overlay), 0.0, 1.0)
 
 
@@ -171,7 +234,14 @@ def _fallback_cloud_appearance(
     return cloud_color, mix
 
 
-def render_one(observation: Observation, preset: RenderPreset, destination: Path) -> None:
+def render_one(
+    observation: Observation,
+    preset: RenderPreset,
+    destination: Path,
+    *,
+    background_asset: Path | None = Path("assets/space-background.jpg"),
+    jpeg_quality: int = 96,
+) -> None:
     base_map = _load(observation.base)
     lights_map = _load(observation.lights)
 
@@ -232,18 +302,21 @@ def render_one(observation: Observation, preset: RenderPreset, destination: Path
         cloud_color, cloud_mix = _fallback_cloud_appearance(visible, cloud_alpha, day)
         earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
 
+    earth = _apple_natural_grade(earth, day, sz)
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)
-    earth += rim[..., None] * np.array([0.20, 0.58, 0.88], dtype=np.float32) * 0.50
+    earth += rim[..., None] * np.array([0.25, 0.62, 0.84], dtype=np.float32) * 0.48
     earth = np.clip(earth, 0.0, 1.0)
 
-    output = space_background(preset.size, asset=Path("assets/space-background.jpg"))
-    output += halo[..., None] * np.array([0.12, 0.48, 0.76], dtype=np.float32) * 0.56
+    output = space_background(preset.size, asset=background_asset)
+    output += halo[..., None] * np.array([0.18, 0.53, 0.76], dtype=np.float32) * 0.66
     output = output * (1.0 - mask[..., None]) + earth * mask[..., None]
     output = np.clip(np.power(output, 0.97), 0.0, 1.0)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(np.uint8(output * 255), "RGB").save(destination, quality=96)
+    Image.fromarray(np.uint8(output * 255), "RGB").save(
+        destination, quality=jpeg_quality, subsampling=0
+    )
 
 
 def render_pair(
@@ -302,6 +375,60 @@ def render_pair(
         "artifacts": artifacts,
     }
     (output / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return manifest
+
+
+def render_mac_pair(
+    observation: Observation,
+    output: Path,
+    target_latitude: float = SHANGHAI[0],
+    target_longitude: float = SHANGHAI[1],
+    target_name: str = "Shanghai",
+) -> dict:
+    """Render native-resolution Mac assets without touching the phone outputs."""
+    output.mkdir(parents=True, exist_ok=True)
+    artifacts = {}
+    for preset in mac_presets_for_location(target_latitude, target_longitude):
+        path = output / f"mac-{preset.name}.jpg"
+        render_one(
+            observation,
+            preset,
+            path,
+            background_asset=None,
+            jpeg_quality=98,
+        )
+        artifacts[preset.name] = {
+            "file": path.name,
+            "sha256": sha256(path),
+            "size": preset.size,
+            "view_center": {
+                "latitude": preset.target_lat,
+                "longitude": preset.target_lon,
+            },
+        }
+
+    manifest = {
+        "profile": "mac",
+        "observation_utc": observation.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "rendered_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source": observation.source,
+        "source_status": observation.status,
+        "render_mode": (
+            "fused_geostationary_plate_location_centered"
+            if observation.geocolor is not None
+            else "equirectangular_cloud_fallback"
+        ),
+        "target": {
+            "name": target_name,
+            "latitude": target_latitude,
+            "longitude": target_longitude,
+        },
+        "acknowledgement": ACKNOWLEDGEMENT,
+        "artifacts": artifacts,
+    }
+    (output / "mac-manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return manifest
