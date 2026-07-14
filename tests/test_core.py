@@ -29,7 +29,7 @@ from earthwall.render import (
     _sharpen_cloud_texture,
     render_pair,
 )
-from earthwall.sources import CIRA_SOURCES, Observation, latest_common_time
+from earthwall.sources import CIRA_SOURCES, Observation, acquire, latest_common_time
 
 
 class CoreTests(unittest.TestCase):
@@ -143,6 +143,28 @@ class CoreTests(unittest.TestCase):
     def test_himawari_is_preferred_over_gk2a(self):
         self.assertEqual(CIRA_SOURCES[0][0], "himawari")
         self.assertEqual(CIRA_SOURCES[1][0], "gk2a")
+
+    def test_separate_gibs_layers_are_preferred_over_fused_geocolor(self):
+        expected = Observation(
+            timestamp=datetime(2026, 7, 14, 13, 0, tzinfo=UTC),
+            visible=Path("visible.png"),
+            infrared=Path("infrared.png"),
+            geocolor=None,
+            base=Path("base.jpg"),
+            lights=Path("lights.jpg"),
+            terrain=Path("terrain.jpg"),
+            status="fresh",
+        )
+        with TemporaryDirectory() as directory, patch(
+            "earthwall.sources._valid_image", return_value=True
+        ), patch(
+            "earthwall.sources._acquire_gibs_layers", return_value=expected
+        ) as gibs, patch(
+            "earthwall.sources._acquire_cira_geocolor"
+        ) as cira:
+            self.assertIs(acquire(Path(directory)), expected)
+        gibs.assert_called_once()
+        cira.assert_not_called()
 
     def test_geocolor_night_grade_removes_infrared_purple(self):
         source = np.array([[[0.60, 0.10, 0.80]]], dtype=np.float32)
@@ -280,11 +302,21 @@ class CoreTests(unittest.TestCase):
         visible = np.zeros_like(base)
         infrared = np.zeros_like(base)
         base[..., 3] = visible[..., 3] = infrared[..., 3] = 1.0
-        infrared[..., :3] = 0.9
+        infrared[..., :3] = (0.9, 0.18, 0.06)
         cloud = _cloud_alpha(
             visible, infrared, base, np.ones((32, 32), dtype=np.float32)
         )
-        self.assertGreater(float(cloud[16, 16]), 0.55)
+        self.assertGreater(float(cloud[16, 16]), 0.40)
+
+    def test_flat_grey_infrared_surface_is_not_a_night_cloud_sheet(self):
+        base = np.zeros((32, 32, 4), dtype=np.float32)
+        visible = np.zeros_like(base)
+        infrared = np.full_like(base, 0.72)
+        base[..., 3] = visible[..., 3] = infrared[..., 3] = 1.0
+        cloud = _cloud_alpha(
+            visible, infrared, base, np.zeros((32, 32), dtype=np.float32)
+        )
+        self.assertLess(float(cloud.mean()), 0.05)
 
     def test_display_grade_separates_day_and_night(self):
         source = np.full((1, 1, 3), 0.35, dtype=np.float32)

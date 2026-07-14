@@ -57,7 +57,7 @@ def _apple_natural_grade(
     # Retain a physically legible day/night separation after the display tone map.
     # Daylight opens the midtones; the night side remains deep enough for VIIRS
     # lights to read clearly without inventing any illumination.
-    exposure = 0.74 + daylight_mix * 0.34
+    exposure = 0.80 + daylight_mix * 0.28
     rgb *= exposure
     rgb += daylight_mix * rgb * (1.0 - rgb) * 0.08
 
@@ -183,6 +183,45 @@ def _night_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
     return smoothstep(0.11, 0.66, neutral_brightness) * night
 
 
+def _blur_scalar(values: np.ndarray, radius: float) -> np.ndarray:
+    image = Image.fromarray(np.uint8(np.clip(values, 0.0, 1.0) * 255), "L")
+    return np.asarray(
+        image.filter(ImageFilter.GaussianBlur(radius)), dtype=np.float32
+    ) / 255.0
+
+
+def _thermal_cloud_signal(infrared: np.ndarray) -> np.ndarray:
+    """Keep cold cloud structures while rejecting the broad grey IR surface."""
+    rgb = infrared[..., :3]
+    luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1
+    )
+    chroma = rgb.max(axis=-1) - rgb.min(axis=-1)
+    broad = _blur_scalar(luminance, 14.0)
+    cold_anomaly = np.clip(luminance - broad, 0.0, 1.0)
+
+    # The GIBS clean-IR palette uses colour for cold cloud tops. Neutral grey is
+    # mostly warm surface/background and must not become a translucent cloud sheet.
+    coloured_top = smoothstep(0.055, 0.34, chroma)
+    neutral_top = smoothstep(0.025, 0.15, cold_anomaly) * (
+        1.0 - smoothstep(0.03, 0.13, chroma)
+    )
+    return np.clip(np.maximum(coloured_top, neutral_top), 0.0, 1.0)
+
+
+def _thermal_cloud_texture(infrared: np.ndarray) -> np.ndarray:
+    """Recover continuous IR structure after the binary cloud decision."""
+    rgb = infrared[..., :3]
+    luminance = np.sum(
+        rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1
+    )
+    chroma = rgb.max(axis=-1) - rgb.min(axis=-1)
+    raw = np.clip(luminance * 0.48 + chroma * 0.52, 0.0, 1.0)
+    fine = _blur_scalar(raw, 1.1)
+    broad = _blur_scalar(raw, 7.0)
+    return np.clip(raw + (raw - fine) * 0.60 + (fine - broad) * 0.25, 0.0, 1.0)
+
+
 def _day_cloud_alpha(satellite: np.ndarray, day: np.ndarray) -> np.ndarray:
     """Estimate neutral daytime cloud coverage only for local detail enhancement."""
     rgb = satellite[..., :3]
@@ -204,7 +243,7 @@ def _sharpen_cloud_texture(
         image.filter(ImageFilter.GaussianBlur(1.25)), dtype=np.float32
     ) / 255.0
     detail = earth - blurred
-    daylight_strength = 0.16 + 0.84 * smoothstep(0.08, 0.70, day)
+    daylight_strength = 0.28 + 0.72 * smoothstep(0.08, 0.70, day)
     strength = (
         smoothstep(0.12, 0.78, cloud_alpha) * daylight_strength
     )[..., None] * 0.52
@@ -298,16 +337,14 @@ def _cloud_alpha(visible: np.ndarray, infrared: np.ndarray, base: np.ndarray, da
     vis_signal = smoothstep(0.055, 0.42, vis_luma - base_luma * 0.31)
     vis_signal *= _feather_coverage(visible[..., 3])
 
-    ir_rgb = infrared[..., :3]
-    ir_luma = ir_rgb.mean(axis=-1)
-    ir_sat = ir_rgb.max(axis=-1) - ir_rgb.min(axis=-1)
-    ir_signal = np.maximum(smoothstep(0.10, 0.58, ir_sat), smoothstep(0.59, 0.88, ir_luma))
+    ir_signal = _thermal_cloud_signal(infrared)
     ir_signal *= _feather_coverage(infrared[..., 3])
     # Visible cloud reflectance fades rapidly near dusk. Infrared remains valid
     # around the clock, so retain it as a restrained daytime coverage floor.
-    day_cloud = np.maximum(vis_signal, ir_signal * 0.72)
-    cloud = day_cloud * day + ir_signal * (1.0 - day)
-    return np.clip(np.power(cloud, 0.82) * 0.92, 0.0, 0.94)
+    day_mix = smoothstep(0.08, 0.72, day)
+    day_cloud = np.maximum(vis_signal, ir_signal * 0.46)
+    cloud = day_cloud * day_mix + ir_signal * (1.0 - day_mix)
+    return np.clip(np.power(cloud, 0.90) * 0.92, 0.0, 0.92)
 
 
 def _fallback_cloud_appearance(
@@ -320,27 +357,26 @@ def _fallback_cloud_appearance(
     reflectance = smoothstep(0.06, 0.74, visible[..., :3].mean(axis=-1))
     reflected_detail = np.power(reflectance, 0.72)
 
-    ir_rgb = infrared[..., :3]
-    ir_luma = ir_rgb.mean(axis=-1)
-    ir_chroma = ir_rgb.max(axis=-1) - ir_rgb.min(axis=-1)
-    thermal = np.maximum(
-        smoothstep(0.10, 0.62, ir_chroma),
-        smoothstep(0.55, 0.91, ir_luma),
+    thermal = _thermal_cloud_signal(infrared)
+    thermal_texture = _thermal_cloud_texture(infrared) * smoothstep(
+        0.02, 0.88, thermal
     )
-    thermal_image = Image.fromarray(np.uint8(thermal * 255), "L")
-    thermal_local = np.asarray(
-        thermal_image.filter(ImageFilter.GaussianBlur(1.15)), dtype=np.float32
-    ) / 255.0
-    thermal_detail = np.clip(thermal + (thermal - thermal_local) * 0.42, 0.0, 1.0)
-    observed_detail = np.maximum(reflected_detail, thermal_detail * 0.82)
-
-    day_tone = 0.38 + 0.50 * observed_detail
-    night_tone = 0.12 + 0.30 * observed_detail
     day_mix = smoothstep(0.08, 0.72, day)
+    observed = np.maximum(reflected_detail * day_mix, thermal_texture)
+    fine = _blur_scalar(observed, 1.15)
+    broad = _blur_scalar(observed, 7.0)
+    observed_detail = np.clip(
+        observed + (observed - fine) * 0.68 + (fine - broad) * 0.28,
+        0.0,
+        1.0,
+    )
+
+    day_tone = 0.36 + 0.52 * observed_detail
+    night_tone = 0.045 + 0.20 * observed_detail
     tone = night_tone * (1.0 - day_mix) + day_tone * day_mix
 
     day_color = np.array([1.02, 1.00, 0.97], dtype=np.float32)
-    night_color = np.array([0.66, 0.73, 0.82], dtype=np.float32)
+    night_color = np.array([0.76, 0.80, 0.86], dtype=np.float32)
     color_balance = (
         night_color[None, None, :] * (1.0 - day_mix[..., None])
         + day_color[None, None, :] * day_mix[..., None]
@@ -349,15 +385,16 @@ def _fallback_cloud_appearance(
 
     # Thin clouds remain translucent; bright convective tops become denser and
     # brighter. Both are driven by the satellite reflectance texture.
-    daytime_strength = 0.32 + 0.52 * observed_detail
-    nighttime_strength = 0.30 + 0.30 * observed_detail
+    density = smoothstep(0.06, 0.88, cloud_alpha)
+    daytime_strength = 0.24 + 0.58 * observed_detail
+    nighttime_strength = 0.12 + 0.66 * observed_detail
     strength = nighttime_strength * (1.0 - day_mix) + daytime_strength * day_mix
     alpha_image = Image.fromarray(np.uint8(np.clip(cloud_alpha, 0.0, 1.0) * 255), "L")
     softened_alpha = np.asarray(
-        alpha_image.filter(ImageFilter.GaussianBlur(1.15)), dtype=np.float32
+        alpha_image.filter(ImageFilter.GaussianBlur(0.55)), dtype=np.float32
     ) / 255.0
     appearance_alpha = softened_alpha * (1.0 - day_mix) + cloud_alpha * day_mix
-    mix = np.clip(appearance_alpha * strength, 0.0, 0.82)
+    mix = np.clip(appearance_alpha * strength * (0.72 + density * 0.28), 0.0, 0.86)
     return cloud_color, mix
 
 
@@ -385,11 +422,13 @@ def render_one(
     day = daylight(vectors, lighting_time or datetime.now(UTC))
 
     base_earth = _grade_earth(base)
-    illumination = 0.28 + 0.72 * np.power(day[..., None], 0.54)
+    illumination = 0.32 + 0.68 * np.power(day[..., None], 0.54)
     base_earth *= illumination
 
     cloud_alpha = np.zeros_like(day)
     cloud_detail_alpha = np.zeros_like(day)
+    cloud_color = np.zeros_like(base_earth)
+    cloud_mix = np.zeros_like(day)
 
     if observation.geocolor is not None:
         geocolor_map = _load(observation.geocolor)
@@ -400,15 +439,6 @@ def render_one(
         cloud_alpha = _night_cloud_alpha(satellite, day)
         cloud_detail_alpha = np.maximum(
             cloud_alpha, _day_cloud_alpha(satellite, day)
-        )
-        cloud_luminance = np.sum(
-            satellite[..., :3]
-            * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
-            axis=-1,
-        )
-        cloud_brightness = 0.15 + 0.31 * smoothstep(0.08, 0.78, cloud_luminance)
-        cloud_color = cloud_brightness[..., None] * np.array(
-            [0.68, 0.75, 0.84], dtype=np.float32
         )
         night_luminance = np.sum(
             base_earth * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
@@ -425,10 +455,15 @@ def render_one(
         ocean_tint = np.array([0.96, 1.00, 1.07], dtype=np.float32)
         night_surface *= land_tint * (1.0 - ocean_weight) + ocean_tint * ocean_weight
         night_surface = np.power(np.clip(night_surface * 1.24 + 0.008, 0.0, 1.0), 0.90)
-        night_earth = night_surface * (1.0 - cloud_alpha[..., None] * 0.52)
-        night_earth += cloud_color * cloud_alpha[..., None] * 0.48
         day_mix = smoothstep(0.08, 0.72, day)[..., None]
-        earth = night_earth * (1.0 - day_mix) + day_earth * day_mix
+        earth = night_surface * (1.0 - day_mix) + day_earth * day_mix
+        cloud_color, cloud_mix = _fallback_cloud_appearance(
+            satellite,
+            satellite,
+            cloud_alpha,
+            np.zeros_like(day),
+        )
+        cloud_mix *= 1.0 - day_mix[..., 0]
         earth = np.where(source_valid[..., None], earth, base_earth)
     else:
         visible_map = _load(observation.visible)
@@ -441,13 +476,15 @@ def render_one(
         cloud_color, cloud_mix = _fallback_cloud_appearance(
             visible, infrared, cloud_alpha, day
         )
-        earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
 
     earth = _apple_natural_grade(earth, day, sz)
     if terrain is not None:
         earth = _apply_terrain_relief(earth, terrain, cloud_detail_alpha, day)
-    earth = _sharpen_cloud_texture(earth, cloud_detail_alpha, day)
+    # VIIRS emission belongs to the surface. Add it before the observed cloud
+    # layer so dense cloud tops occlude it instead of lights floating above cloud.
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
+    earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
+    earth = _sharpen_cloud_texture(earth, cloud_detail_alpha, day)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)
     earth += rim[..., None] * np.array([0.25, 0.62, 0.84], dtype=np.float32) * 0.48
@@ -498,7 +535,7 @@ def render_pair(
         "render_mode": (
             "fused_geostationary_plate_location_centered"
             if observation.geocolor is not None
-            else "equirectangular_cloud_fallback"
+            else "separate_visible_ir_cloud_layers"
         ),
         "observation_asset_sha256": sha256(
             observation.geocolor or observation.visible

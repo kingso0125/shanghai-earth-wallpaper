@@ -144,6 +144,41 @@ def _newest_cached_geocolor(cache: Path) -> tuple[datetime, Path, str] | None:
     )
 
 
+def _acquire_gibs_layers(
+    cache: Path,
+    base: Path,
+    lights: Path,
+    terrain: Path | None,
+) -> Observation:
+    capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
+    timestamp = latest_common_time(capabilities)
+    stamp = timestamp.strftime("%Y%m%dT%H%MZ")
+    visible = cache / f"himawari-{stamp}-visible.png"
+    infrared = cache / f"himawari-{stamp}-infrared.png"
+    if not _valid_image(visible):
+        _atomic_download(
+            _wms_url(VISIBLE_LAYER, timestamp=timestamp, image_format="image/png"),
+            visible,
+        )
+    if not _valid_image(infrared):
+        _atomic_download(
+            _wms_url(IR_LAYER, timestamp=timestamp, image_format="image/png"),
+            infrared,
+        )
+    return Observation(
+        timestamp,
+        visible,
+        infrared,
+        None,
+        base,
+        lights,
+        "fresh",
+        "NASA GIBS / JMA Himawari-9",
+        140.7,
+        terrain,
+    )
+
+
 CIRA_LATEST = "https://rammb-slider.cira.colostate.edu/data/json/{satellite}/full_disk/geocolor/latest_times.json"
 CIRA_DATA = (
     "https://slider.cira.colostate.edu/data/rammb-slider6/slider/"
@@ -222,8 +257,16 @@ def acquire(cache: Path) -> Observation:
             )
         except Exception:
             terrain = None
-    # Himawari is the primary plate: its full disk is consistently complete at
-    # high northern latitudes. GK2A remains the live fallback when JMA is late.
+
+    # Separate JMA visible/IR layers are the primary source. They let the
+    # renderer put city emission below live cloud and avoid GeoColor's synthetic
+    # night palette becoming a flat grey/purple cloud sheet.
+    try:
+        return _acquire_gibs_layers(cache, base, lights, terrain)
+    except Exception:
+        pass
+
+    # CIRA remains the high-resolution fallback when NASA GIBS is unavailable.
     for satellite, source, satellite_longitude in CIRA_SOURCES:
         try:
             timestamp, geocolor = _acquire_cira_geocolor(cache, satellite)
@@ -259,52 +302,23 @@ def acquire(cache: Path) -> Observation:
                 terrain,
             )
 
-    try:
-        capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
-        timestamp = latest_common_time(capabilities)
-        stamp = timestamp.strftime("%Y%m%dT%H%MZ")
-        visible = cache / f"himawari-{stamp}-visible.png"
-        infrared = cache / f"himawari-{stamp}-infrared.png"
-        if not _valid_image(visible):
-            _atomic_download(
-                _wms_url(VISIBLE_LAYER, timestamp=timestamp, image_format="image/png"),
-                visible,
-            )
-        if not _valid_image(infrared):
-            _atomic_download(
-                _wms_url(IR_LAYER, timestamp=timestamp, image_format="image/png"),
-                infrared,
-            )
+    cached = _newest_cached_pair(cache)
+    if cached is not None:
+        timestamp, visible, infrared = cached
         return Observation(
-            timestamp,
-            visible,
-            infrared,
-            None,
-            base,
-            lights,
-            "fresh",
-            "NASA GIBS / JMA Himawari-9",
-            140.7,
-            terrain,
+            timestamp, visible, infrared, None, base, lights, "cached",
+            terrain=terrain,
         )
-    except Exception:
-        cached = _newest_cached_pair(cache)
-        if cached is not None:
-            timestamp, visible, infrared = cached
-            return Observation(
-                timestamp, visible, infrared, None, base, lights, "cached",
-                terrain=terrain,
-            )
-        geocolor_cached = _newest_cached_geocolor(cache)
-        if geocolor_cached is None:
-            raise
-        timestamp, geocolor, satellite = geocolor_cached
-        return Observation(
-            timestamp, geocolor, geocolor, geocolor, base, lights, "cached",
-            f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
-            128.2 if satellite == "gk2a" else 140.7,
-            terrain,
-        )
+    geocolor_cached = _newest_cached_geocolor(cache)
+    if geocolor_cached is None:
+        raise RuntimeError("no live or cached satellite observation is available")
+    timestamp, geocolor, satellite = geocolor_cached
+    return Observation(
+        timestamp, geocolor, geocolor, geocolor, base, lights, "cached",
+        f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
+        128.2 if satellite == "gk2a" else 140.7,
+        terrain,
+    )
 
 
 def sha256(path: Path) -> str:

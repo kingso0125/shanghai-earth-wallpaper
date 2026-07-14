@@ -30,6 +30,9 @@ class Publisher:
             staging = Path(
                 tempfile.mkdtemp(prefix=".render-", dir=self.root / "releases")
             )
+            # tempfile creates mode 0700; nginx must be able to traverse the
+            # atomically published release directory after the symlink swap.
+            staging.chmod(0o755)
             try:
                 observation = acquire(self.cache)
                 manifest = render_pair(
