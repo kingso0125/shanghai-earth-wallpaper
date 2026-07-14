@@ -26,6 +26,15 @@ class CoreTests(unittest.TestCase):
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), SHANGHAI[1], places=2)
         self.assertFalse(bool(visible[0, 0]))
 
+    def test_home_keeps_shanghai_above_the_bottom_controls(self):
+        home = presets_for_location(*SHANGHAI)[1]
+        self.assertEqual(home.target_lat, 0.0)
+        shanghai_y = home.center_px[1] - home.globe_radius_px * np.sin(
+            np.deg2rad(SHANGHAI[0])
+        )
+        self.assertGreater(shanghai_y, 1500)
+        self.assertLess(shanghai_y, 1800)
+
     def test_camera_can_follow_guangzhou_meridian(self):
         guangzhou = presets_for_location(23.1291, 113.2644)[0]
         lat, lon, _, _, _ = camera_grid(guangzhou)

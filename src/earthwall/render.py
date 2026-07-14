@@ -221,7 +221,15 @@ def render_pair(
     for preset in presets:
         path = output / f"{preset.name}.jpg"
         render_one(observation, preset, path)
-        artifacts[preset.name] = {"file": path.name, "sha256": sha256(path), "size": preset.size}
+        artifacts[preset.name] = {
+            "file": path.name,
+            "sha256": sha256(path),
+            "size": preset.size,
+            "view_center": {
+                "latitude": preset.target_lat,
+                "longitude": preset.target_lon,
+            },
+        }
 
     sun = sun_vector(observation.timestamp)
     manifest = {
@@ -243,8 +251,8 @@ def render_pair(
             "longitude": target_longitude,
         },
         "view_center": {
-            "latitude": target_latitude,
-            "longitude": target_longitude,
+            "lock": artifacts["lock"]["view_center"],
+            "home": artifacts["home"]["view_center"],
         },
         "sun_vector": [round(float(value), 7) for value in sun],
         "acknowledgement": ACKNOWLEDGEMENT,
