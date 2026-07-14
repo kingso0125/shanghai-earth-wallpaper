@@ -135,7 +135,11 @@ def _newest_cached_geocolor(cache: Path) -> tuple[datetime, Path, str] | None:
         except ValueError:
             continue
         candidates.append((timestamp, path, satellite))
-    return max(candidates, default=None, key=lambda item: item[0])
+    return max(
+        candidates,
+        default=None,
+        key=lambda item: (item[0], item[2] == "himawari"),
+    )
 
 
 CIRA_LATEST = "https://rammb-slider.cira.colostate.edu/data/json/{satellite}/full_disk/geocolor/latest_times.json"
@@ -143,43 +147,60 @@ CIRA_DATA = (
     "https://slider.cira.colostate.edu/data/rammb-slider6/slider/"
     "data_location_01"
 )
+CIRA_SOURCES = (
+    ("himawari", "CIRA SLIDER / JMA Himawari-9", 140.7),
+    ("gk2a", "CIRA SLIDER / KMA GK2A", 128.2),
+)
 
 
 def _acquire_cira_geocolor(cache: Path, satellite: str) -> tuple[datetime, Path]:
     payload = json.loads(_request(CIRA_LATEST.format(satellite=satellite)))
-    timestamp_text = str(payload["timestamps_int"][0])
-    timestamp = datetime.strptime(timestamp_text, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
     now = datetime.now(UTC)
-    if not (timestamp <= now and (now - timestamp).total_seconds() <= 3 * 3600):
-        raise ValueError(f"CIRA observation is stale: {timestamp.isoformat()}")
-    destination = cache / f"cira-{satellite}-{timestamp.strftime('%Y%m%dT%H%MZ')}-geocolor.png"
-    if _valid_image(destination, expected_size=(2752, 2752)):
+    last_error: Exception | None = None
+    for raw_timestamp in payload["timestamps_int"][:12]:
+        timestamp_text = str(raw_timestamp)
+        timestamp = datetime.strptime(timestamp_text, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        if not (timestamp <= now and (now - timestamp).total_seconds() <= 3 * 3600):
+            continue
+        destination = cache / (
+            f"cira-{satellite}-{timestamp.strftime('%Y%m%dT%H%MZ')}-geocolor.png"
+        )
+        if _valid_image(destination, expected_size=(2752, 2752)):
+            return timestamp, destination
+
+        date_path = timestamp.strftime("%Y/%m/%d")
+        stamp = timestamp.strftime("%Y%m%d%H%M%S")
+        canvas = Image.new("RGB", (2752, 2752))
+        try:
+            for row in range(4):
+                for column in range(4):
+                    url = (
+                        f"{CIRA_DATA}/{date_path}/{satellite}/full_disk/geocolor/"
+                        f"{stamp}/02/{row:03d}_{column:03d}.png"
+                    )
+                    tile = Image.open(io.BytesIO(_request(url))).convert("RGB")
+                    if tile.size != (688, 688):
+                        raise ValueError(f"unexpected CIRA tile size {tile.size}")
+                    canvas.paste(tile, (column * 688, row * 688))
+        except Exception as error:
+            last_error = error
+            continue
+
+        tmp = destination.with_suffix(".tmp.png")
+        canvas.save(tmp, optimize=True)
+        tmp.replace(destination)
+        old_files = sorted(
+            cache.glob(f"cira-{satellite}-*-geocolor.png"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for old in old_files[3:]:
+            old.unlink(missing_ok=True)
         return timestamp, destination
 
-    date_path = timestamp.strftime("%Y/%m/%d")
-    stamp = timestamp.strftime("%Y%m%d%H%M%S")
-    canvas = Image.new("RGB", (2752, 2752))
-    for row in range(4):
-        for column in range(4):
-            url = (
-                f"{CIRA_DATA}/{date_path}/{satellite}/full_disk/geocolor/"
-                f"{stamp}/02/{row:03d}_{column:03d}.png"
-            )
-            tile = Image.open(io.BytesIO(_request(url))).convert("RGB")
-            if tile.size != (688, 688):
-                raise ValueError(f"unexpected CIRA tile size {tile.size}")
-            canvas.paste(tile, (column * 688, row * 688))
-    tmp = destination.with_suffix(".tmp.png")
-    canvas.save(tmp, optimize=True)
-    tmp.replace(destination)
-    old_files = sorted(
-        cache.glob(f"cira-{satellite}-*-geocolor.png"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for old in old_files[3:]:
-        old.unlink(missing_ok=True)
-    return timestamp, destination
+    if last_error is not None:
+        raise last_error
+    raise ValueError(f"no recent CIRA {satellite} observation")
 
 
 def acquire(cache: Path) -> Observation:
@@ -190,38 +211,40 @@ def acquire(cache: Path) -> Observation:
         _atomic_download(_wms_url(BASE_LAYER, timestamp=None, image_format="image/jpeg"), base)
     if not _valid_image(lights):
         _atomic_download(_wms_url(LIGHTS_LAYER, timestamp=None, image_format="image/jpeg"), lights)
-    try:
-        timestamp, geocolor = _acquire_cira_geocolor(cache, "gk2a")
-        placeholder = geocolor
-        return Observation(
-            timestamp=timestamp,
-            visible=placeholder,
-            infrared=placeholder,
-            geocolor=geocolor,
-            base=base,
-            lights=lights,
-            status="fresh",
-            source="CIRA SLIDER / KMA GK2A",
-            satellite_longitude=128.2,
-        )
-    except Exception:
-        pass
+    # Himawari is the primary plate: its full disk is consistently complete at
+    # high northern latitudes. GK2A remains the live fallback when JMA is late.
+    for satellite, source, satellite_longitude in CIRA_SOURCES:
+        try:
+            timestamp, geocolor = _acquire_cira_geocolor(cache, satellite)
+            return Observation(
+                timestamp=timestamp,
+                visible=geocolor,
+                infrared=geocolor,
+                geocolor=geocolor,
+                base=base,
+                lights=lights,
+                status="fresh",
+                source=source,
+                satellite_longitude=satellite_longitude,
+            )
+        except Exception:
+            pass
 
-    try:
-        timestamp, geocolor = _acquire_cira_geocolor(cache, "himawari")
-        return Observation(
-            timestamp=timestamp,
-            visible=geocolor,
-            infrared=geocolor,
-            geocolor=geocolor,
-            base=base,
-            lights=lights,
-            status="fresh",
-            source="CIRA SLIDER / JMA Himawari-9",
-            satellite_longitude=140.7,
-        )
-    except Exception:
-        pass
+    cached_geocolor = _newest_cached_geocolor(cache)
+    if cached_geocolor is not None:
+        timestamp, geocolor, satellite = cached_geocolor
+        if 0 <= (datetime.now(UTC) - timestamp).total_seconds() <= 3 * 3600:
+            return Observation(
+                timestamp,
+                geocolor,
+                geocolor,
+                geocolor,
+                base,
+                lights,
+                "cached",
+                f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
+                128.2 if satellite == "gk2a" else 140.7,
+            )
 
     try:
         capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
@@ -240,7 +263,15 @@ def acquire(cache: Path) -> Observation:
                 infrared,
             )
         return Observation(
-            timestamp, visible, infrared, None, base, lights, "fresh",
+            timestamp,
+            visible,
+            infrared,
+            None,
+            base,
+            lights,
+            "fresh",
+            "NASA GIBS / JMA Himawari-9",
+            140.7,
         )
     except Exception:
         cached = _newest_cached_pair(cache)

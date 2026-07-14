@@ -8,7 +8,7 @@ from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
 from earthwall.location import Location, LocationStore, haversine_km
 from earthwall.render import _blend_city_lights, _grade_geocolor, _night_cloud_alpha
-from earthwall.sources import latest_common_time
+from earthwall.sources import CIRA_SOURCES, latest_common_time
 
 
 class CoreTests(unittest.TestCase):
@@ -75,6 +75,10 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             latest_common_time(xml), datetime(2026, 7, 13, 1, 20, tzinfo=UTC)
         )
+
+    def test_himawari_is_preferred_over_gk2a(self):
+        self.assertEqual(CIRA_SOURCES[0][0], "himawari")
+        self.assertEqual(CIRA_SOURCES[1][0], "gk2a")
 
     def test_geocolor_night_grade_removes_infrared_purple(self):
         source = np.array([[[0.60, 0.10, 0.80]]], dtype=np.float32)
