@@ -242,17 +242,19 @@ def _acquire_cira_geocolor(cache: Path, satellite: str) -> tuple[datetime, Path]
 
 def acquire(cache: Path) -> Observation:
     cache.mkdir(parents=True, exist_ok=True)
-    base = cache / "blue-marble.jpg"
-    lights = cache / "city-lights.jpg"
-    terrain = cache / "terrain-relief.jpg"
+    # Keep static surface layers lossless. JPEG block artifacts become obvious
+    # in the Home close-up and make terrain/lights look like a painted texture.
+    base = cache / "blue-marble.png"
+    lights = cache / "city-lights.png"
+    terrain = cache / "terrain-color-relief.png"
     if not _valid_image(base):
-        _atomic_download(_wms_url(BASE_LAYER, timestamp=None, image_format="image/jpeg"), base)
+        _atomic_download(_wms_url(BASE_LAYER, timestamp=None, image_format="image/png"), base)
     if not _valid_image(lights):
-        _atomic_download(_wms_url(LIGHTS_LAYER, timestamp=None, image_format="image/jpeg"), lights)
+        _atomic_download(_wms_url(LIGHTS_LAYER, timestamp=None, image_format="image/png"), lights)
     if not _valid_image(terrain):
         try:
             _atomic_download(
-                _wms_url(TERRAIN_LAYER, timestamp=None, image_format="image/jpeg"),
+                _wms_url(TERRAIN_LAYER, timestamp=None, image_format="image/png"),
                 terrain,
             )
         except Exception:

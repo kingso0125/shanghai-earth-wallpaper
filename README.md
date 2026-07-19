@@ -61,6 +61,8 @@ GK2A 不可用时依次降级到 Himawari-9、NASA GIBS 与缓存数据；`manif
 
 `assets/space-background.jpg` 是可选的生成式美术层，只影响星空与极弱的银河尘埃；真实地球、云层和昼夜状态不会经过生成模型。没有该文件时自动使用确定性的程序化星空。
 
+Codex 内置生图只用于人工监督下的色彩与材质标定，不进入每小时生产链。正式输出的云形、地表、昼夜边界和城市灯光始终来自公开观测数据与确定性渲染，避免模型改写实时状态。
+
 ## Attribution
 
 Satellite imagery: Korea Meteorological Administration (KMA), Japan Meteorological Agency (JMA), NOAA/NESDIS, and Colorado State University/CIRA. Static Earth and city-light imagery: NASA Earth Observatory/GIBS.

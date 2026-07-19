@@ -18,6 +18,7 @@ from earthwall.lighting import daylight, sun_vector
 from earthwall.location import Location, LocationStore, haversine_km
 from earthwall.render import (
     _apple_natural_grade,
+    _apply_cloud_shadow,
     _apply_terrain_relief,
     _blend_city_lights,
     _city_light_signal,
@@ -26,6 +27,7 @@ from earthwall.render import (
     _feather_coverage,
     _grade_geocolor,
     _night_cloud_alpha,
+    _shape_cloud_volume,
     _sharpen_cloud_texture,
     render_pair,
 )
@@ -282,11 +284,32 @@ class CoreTests(unittest.TestCase):
         )
         np.testing.assert_allclose(sharpened[0, 0], earth[0, 0], atol=1e-6)
 
+    def test_cloud_volume_adds_depth_without_touching_clear_pixels(self):
+        earth = np.full((31, 31, 3), 0.42, dtype=np.float32)
+        alpha = np.zeros((31, 31), dtype=np.float32)
+        alpha[9:22, 9:22] = 0.58
+        alpha[13:18, 13:18] = 0.94
+        shaped = _shape_cloud_volume(
+            earth.copy(), alpha, np.ones((31, 31), dtype=np.float32)
+        )
+        np.testing.assert_allclose(shaped[0, 0], earth[0, 0], atol=1e-6)
+        self.assertGreater(float(np.ptp(shaped[9:22, 9:22])), 0.01)
+
+    def test_cloud_shadow_is_daylight_only(self):
+        earth = np.full((31, 31, 3), 0.5, dtype=np.float32)
+        alpha = np.zeros((31, 31), dtype=np.float32)
+        alpha[12:19, 12:19] = 0.9
+        day = np.tile(np.linspace(0.15, 1.0, 31, dtype=np.float32), (31, 1))
+        shaded = _apply_cloud_shadow(earth, alpha, day)
+        night = _apply_cloud_shadow(earth, alpha, np.zeros_like(day))
+        self.assertLess(float(shaded.mean()), float(earth.mean()))
+        np.testing.assert_allclose(night, earth, atol=1e-6)
+
     def test_terrain_relief_adds_land_detail_but_stays_below_clouds(self):
         earth = np.full((21, 21, 3), 0.5, dtype=np.float32)
-        relief = np.full((21, 21, 4), 0.68, dtype=np.float32)
+        relief = np.full((21, 21, 4), (0.46, 0.54, 0.32, 1.0), dtype=np.float32)
         relief[..., 3] = 1.0
-        relief[9:12, 9:12, :3] = 0.84
+        relief[9:12, 9:12, :3] = (0.90, 0.82, 0.76)
         day = np.ones((21, 21), dtype=np.float32)
         clear = _apply_terrain_relief(
             earth, relief, np.zeros((21, 21), dtype=np.float32), day

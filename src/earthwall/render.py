@@ -190,6 +190,38 @@ def _blur_scalar(values: np.ndarray, radius: float) -> np.ndarray:
     ) / 255.0
 
 
+def _dominant_light_direction(day: np.ndarray) -> tuple[float, float]:
+    """Return the screen-space direction toward stronger real sunlight."""
+    if min(day.shape) < 2:
+        return -0.707, -0.707
+    gradient_y, gradient_x = np.gradient(day)
+    transition = smoothstep(0.02, 0.45, day) * (
+        1.0 - smoothstep(0.72, 0.995, day)
+    )
+    direction_x = float(np.sum(gradient_x * transition))
+    direction_y = float(np.sum(gradient_y * transition))
+    magnitude = float(np.hypot(direction_x, direction_y))
+    if magnitude < 1e-6:
+        return -0.707, -0.707
+    return direction_x / magnitude, direction_y / magnitude
+
+
+def _shift_scalar(values: np.ndarray, shift_x: int, shift_y: int) -> np.ndarray:
+    """Translate a scalar plate without wrapping pixels around an edge."""
+    height, width = values.shape
+    padded = np.pad(
+        values,
+        (
+            (max(shift_y, 0), max(-shift_y, 0)),
+            (max(shift_x, 0), max(-shift_x, 0)),
+        ),
+        mode="edge",
+    )
+    start_y = max(-shift_y, 0)
+    start_x = max(-shift_x, 0)
+    return padded[start_y : start_y + height, start_x : start_x + width]
+
+
 def _thermal_cloud_signal(infrared: np.ndarray) -> np.ndarray:
     """Keep cold cloud structures while rejecting the broad grey IR surface."""
     rgb = infrared[..., :3]
@@ -250,6 +282,60 @@ def _sharpen_cloud_texture(
     return np.clip(earth + detail * strength, 0.0, 1.0)
 
 
+def _shape_cloud_volume(
+    earth: np.ndarray, cloud_alpha: np.ndarray, day: np.ndarray
+) -> np.ndarray:
+    """Give observed clouds optical-depth relief without moving their geometry."""
+    fine = _blur_scalar(cloud_alpha, 1.15)
+    broad = _blur_scalar(cloud_alpha, 6.5)
+    local_depth = np.clip(
+        (cloud_alpha - fine) * 1.05 + (fine - broad) * 0.58,
+        -0.28,
+        0.28,
+    )
+    facing_light = np.zeros_like(cloud_alpha)
+    if min(cloud_alpha.shape) >= 2:
+        light_x, light_y = _dominant_light_direction(day)
+        gradient_y, gradient_x = np.gradient(fine)
+        facing_light = np.clip(
+            (gradient_x * light_x + gradient_y * light_y) * 5.0,
+            -0.16,
+            0.16,
+        )
+    cloud = smoothstep(0.08, 0.78, cloud_alpha)
+    daylight = smoothstep(0.06, 0.76, day)
+    strength = cloud * (0.34 + daylight * 0.66)
+
+    shaped_depth = local_depth + facing_light * daylight * 0.65
+    highlights = np.clip(shaped_depth, 0.0, 1.0) * strength
+    shadows = np.clip(-shaped_depth, 0.0, 1.0) * strength
+    highlight_tone = np.array([1.00, 0.985, 0.95], dtype=np.float32)
+    earth += (1.0 - earth) * highlights[..., None] * highlight_tone * 0.48
+    earth *= 1.0 - shadows[..., None] * 0.34
+
+    # Dense cloud tops remain white while thin edges retain the surface below.
+    dense = smoothstep(0.56, 0.94, cloud_alpha) * daylight
+    earth += (1.0 - earth) * dense[..., None] * np.array(
+        [0.055, 0.052, 0.048], dtype=np.float32
+    )
+    return np.clip(earth, 0.0, 1.0)
+
+
+def _apply_cloud_shadow(
+    earth: np.ndarray, cloud_alpha: np.ndarray, day: np.ndarray
+) -> np.ndarray:
+    """Cast a restrained daylight shadow from the unchanged live cloud mask."""
+    light_x, light_y = _dominant_light_direction(day)
+    offset_x = int(round(-light_x * 4.0))
+    offset_y = int(round(-light_y * 4.0))
+    softened = _blur_scalar(cloud_alpha, 1.8)
+    cast = _shift_scalar(softened, offset_x, offset_y)
+    exposed_shadow = np.clip(cast - cloud_alpha * 0.38, 0.0, 1.0)
+    daylight = smoothstep(0.10, 0.82, day)
+    shadow = smoothstep(0.08, 0.72, exposed_shadow) * daylight * 0.12
+    return np.clip(earth * (1.0 - shadow[..., None]), 0.0, 1.0)
+
+
 def _apply_terrain_relief(
     earth: np.ndarray,
     relief: np.ndarray,
@@ -257,36 +343,54 @@ def _apply_terrain_relief(
     day: np.ndarray,
 ) -> np.ndarray:
     """Add restrained ASTER terrain shading without embossing oceans or clouds."""
+    relief_rgb = relief[..., :3]
     gray = np.sum(
-        relief[..., :3] * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        relief_rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
         axis=-1,
     )
     gray_image = Image.fromarray(np.uint8(np.clip(gray, 0.0, 1.0) * 255), "L")
     fine_local = np.asarray(
-        gray_image.filter(ImageFilter.GaussianBlur(2.0)), dtype=np.float32
+        gray_image.filter(ImageFilter.GaussianBlur(1.35)), dtype=np.float32
+    ) / 255.0
+    medium_local = np.asarray(
+        gray_image.filter(ImageFilter.GaussianBlur(6.0)), dtype=np.float32
     ) / 255.0
     broad_local = np.asarray(
-        gray_image.filter(ImageFilter.GaussianBlur(11.0)), dtype=np.float32
+        gray_image.filter(ImageFilter.GaussianBlur(24.0)), dtype=np.float32
     ) / 255.0
     terrain_detail = np.clip(
-        (gray - fine_local) * 2.0 + (gray - broad_local) * 1.35,
-        -0.18,
-        0.18,
+        (gray - fine_local) * 2.15
+        + (fine_local - medium_local) * 1.45
+        + (medium_local - broad_local) * 0.82,
+        -0.22,
+        0.22,
     )
 
-    land = smoothstep(0.50, 0.64, gray)
+    # The colour relief plate marks water blue. Use that invariant as the land
+    # mask, while its luminance supplies only elevation/shade structure.
+    water_blue = relief_rgb[..., 2] - np.maximum(
+        relief_rgb[..., 0], relief_rgb[..., 1]
+    )
+    land = 1.0 - smoothstep(0.015, 0.13, water_blue)
     land_image = Image.fromarray(np.uint8(land * 255), "L")
     land_core = np.asarray(
-        land_image.filter(ImageFilter.MinFilter(11)), dtype=np.float32
+        land_image.filter(ImageFilter.MinFilter(9)), dtype=np.float32
     ) / 255.0
-    cloud_visibility = 1.0 - smoothstep(0.10, 0.72, cloud_alpha)
+    cloud_visibility = 1.0 - smoothstep(0.18, 0.86, cloud_alpha)
     light_visibility = 0.34 + 0.66 * smoothstep(0.04, 0.72, day)
     strength = land_core * cloud_visibility * light_visibility
-    return np.clip(
+    relieved = np.clip(
         earth * (1.0 + terrain_detail[..., None] * strength[..., None]),
         0.0,
         1.0,
     )
+    luminance = np.sum(
+        relieved * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
+        axis=-1,
+        keepdims=True,
+    )
+    material = 1.0 + np.abs(terrain_detail[..., None]) * strength[..., None] * 0.16
+    return np.clip(luminance + (relieved - luminance) * material, 0.0, 1.0)
 
 
 def _feather_coverage(alpha: np.ndarray, radius: float = 96.0) -> np.ndarray:
@@ -370,9 +474,40 @@ def _fallback_cloud_appearance(
         0.0,
         1.0,
     )
+    material_fine = _blur_scalar(observed_detail, 1.35)
+    material_broad = _blur_scalar(observed_detail, 10.0)
+    material_depth = np.clip(
+        (observed_detail - material_fine) * 0.88
+        + (material_fine - material_broad) * 0.52,
+        -0.24,
+        0.24,
+    )
 
-    day_tone = 0.36 + 0.52 * observed_detail
-    night_tone = 0.045 + 0.20 * observed_detail
+    cloud_fine = _blur_scalar(cloud_alpha, 1.25)
+    cloud_broad = _blur_scalar(cloud_alpha, 7.0)
+    optical_relief = np.clip(
+        (cloud_alpha - cloud_fine) * 0.80
+        + (cloud_fine - cloud_broad) * 0.42,
+        -0.22,
+        0.22,
+    )
+    facing_light = np.zeros_like(cloud_alpha)
+    if min(cloud_alpha.shape) >= 2:
+        light_x, light_y = _dominant_light_direction(day)
+        gradient_y, gradient_x = np.gradient(cloud_fine)
+        facing_light = np.clip(
+            (gradient_x * light_x + gradient_y * light_y) * 4.5,
+            -0.14,
+            0.14,
+        )
+    day_tone = (
+        0.48
+        + 0.43 * observed_detail
+        + optical_relief * 0.19
+        + facing_light * 0.16
+        + material_depth * 0.44
+    )
+    night_tone = 0.040 + 0.17 * observed_detail + optical_relief * 0.055
     tone = night_tone * (1.0 - day_mix) + day_tone * day_mix
 
     day_color = np.array([1.02, 1.00, 0.97], dtype=np.float32)
@@ -381,13 +516,13 @@ def _fallback_cloud_appearance(
         night_color[None, None, :] * (1.0 - day_mix[..., None])
         + day_color[None, None, :] * day_mix[..., None]
     )
-    cloud_color = np.clip(tone[..., None] * color_balance, 0.0, 0.92)
+    cloud_color = np.clip(np.minimum(tone, 0.92)[..., None] * color_balance, 0.0, 0.96)
 
     # Thin clouds remain translucent; bright convective tops become denser and
     # brighter. Both are driven by the satellite reflectance texture.
     density = smoothstep(0.06, 0.88, cloud_alpha)
-    daytime_strength = 0.24 + 0.58 * observed_detail
-    nighttime_strength = 0.12 + 0.66 * observed_detail
+    daytime_strength = 0.10 + 0.62 * observed_detail * (0.45 + density * 0.55)
+    nighttime_strength = 0.10 + 0.58 * observed_detail
     strength = nighttime_strength * (1.0 - day_mix) + daytime_strength * day_mix
     alpha_image = Image.fromarray(np.uint8(np.clip(cloud_alpha, 0.0, 1.0) * 255), "L")
     softened_alpha = np.asarray(
@@ -480,18 +615,20 @@ def render_one(
     earth = _apple_natural_grade(earth, day, sz)
     if terrain is not None:
         earth = _apply_terrain_relief(earth, terrain, cloud_detail_alpha, day)
+    earth = _apply_cloud_shadow(earth, cloud_detail_alpha, day)
     # VIIRS emission belongs to the surface. Add it before the observed cloud
     # layer so dense cloud tops occlude it instead of lights floating above cloud.
     earth = _blend_city_lights(earth, lights, day, cloud_alpha)
     earth = earth * (1.0 - cloud_mix[..., None]) + cloud_color * cloud_mix[..., None]
+    earth = _shape_cloud_volume(earth, cloud_detail_alpha, day)
     earth = _sharpen_cloud_texture(earth, cloud_detail_alpha, day)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)
-    earth += rim[..., None] * np.array([0.25, 0.62, 0.84], dtype=np.float32) * 0.48
+    earth += rim[..., None] * np.array([0.20, 0.58, 0.88], dtype=np.float32) * 0.40
     earth = np.clip(earth, 0.0, 1.0)
 
     output = space_background(preset.size, asset=background_asset)
-    output += halo[..., None] * np.array([0.18, 0.53, 0.76], dtype=np.float32) * 0.66
+    output += halo[..., None] * np.array([0.15, 0.48, 0.82], dtype=np.float32) * 0.62
     output = output * (1.0 - mask[..., None]) + earth * mask[..., None]
     output = np.clip(np.power(output, 0.97), 0.0, 1.0)
     destination.parent.mkdir(parents=True, exist_ok=True)
