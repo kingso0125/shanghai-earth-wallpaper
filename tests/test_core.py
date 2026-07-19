@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 
 from earthwall.config import (
     HOME,
@@ -31,7 +32,13 @@ from earthwall.render import (
     _sharpen_cloud_texture,
     render_pair,
 )
-from earthwall.sources import CIRA_SOURCES, Observation, acquire, latest_common_time
+from earthwall.sources import (
+    CIRA_SOURCES,
+    Observation,
+    _valid_image,
+    acquire,
+    latest_common_time,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -141,6 +148,15 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             latest_common_time(xml), datetime(2026, 7, 13, 1, 20, tzinfo=UTC)
         )
+
+    def test_valid_image_rejects_truncated_payload(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "satellite.png"
+            Image.fromarray(np.zeros((12, 16, 3), dtype=np.uint8), "RGB").save(path)
+            self.assertTrue(_valid_image(path, expected_size=(16, 12)))
+            payload = path.read_bytes()
+            path.write_bytes(payload[: len(payload) // 2])
+            self.assertFalse(_valid_image(path, expected_size=(16, 12)))
 
     def test_himawari_is_preferred_over_gk2a(self):
         self.assertEqual(CIRA_SOURCES[0][0], "himawari")

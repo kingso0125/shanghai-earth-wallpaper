@@ -100,7 +100,10 @@ def latest_common_time(capabilities: str) -> datetime:
 def _valid_image(path: Path, expected_size=(4096, 2048)) -> bool:
     try:
         with Image.open(path) as image:
-            return image.size == expected_size
+            if image.size != expected_size:
+                return False
+            image.verify()
+            return True
     except (FileNotFoundError, OSError):
         return False
 

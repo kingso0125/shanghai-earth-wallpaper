@@ -16,10 +16,15 @@ latest_visible="$(/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=8 "$source_hos
   "ls -1t /var/cache/earthwall/himawari-*-visible.png 2>/dev/null | head -1" 2>/dev/null || true)"
 if [[ -n "$latest_visible" ]]; then
   latest_infrared="${latest_visible%-visible.png}-infrared.png"
-  /usr/bin/scp -q -o BatchMode=yes -o ConnectTimeout=8 \
+  sync="$(mktemp -d "$state/sync.XXXXXX")"
+  if /usr/bin/scp -q -o BatchMode=yes -o ConnectTimeout=8 \
     "$source_host:$latest_visible" "$source_host:$latest_infrared" \
-    "$source_host:/srv/earthwall/current/manifest.json" "$cache/" 2>/dev/null || true
-  [[ -f "$cache/manifest.json" ]] && /bin/mv -f "$cache/manifest.json" "$cache/server-manifest.json"
+    "$source_host:/srv/earthwall/current/manifest.json" "$sync/" 2>/dev/null; then
+    /bin/mv -f "$sync/${latest_visible:t}" "$cache/${latest_visible:t}"
+    /bin/mv -f "$sync/${latest_infrared:t}" "$cache/${latest_infrared:t}"
+    /bin/mv -f "$sync/manifest.json" "$cache/server-manifest.json"
+  fi
+  /bin/rm -rf "$sync"
 fi
 
 work="$(mktemp -d "$state/render.XXXXXX")"
