@@ -39,6 +39,7 @@ from earthwall.sources import (
     acquire,
     latest_common_time,
 )
+from earthwall.style import atmosphere
 
 
 class CoreTests(unittest.TestCase):
@@ -267,9 +268,21 @@ class CoreTests(unittest.TestCase):
             np.ones((1, 1), dtype=np.float32),
             np.ones((1, 1), dtype=np.float32),
         )
-        self.assertGreater(float(graded[0, 0, 2]), float(graded[0, 0, 1]) * 1.6)
-        self.assertGreater(float(graded[0, 0, 1]), float(graded[0, 0, 0]))
-        self.assertGreater(float(graded.mean()), float(ocean.mean()) * 1.25)
+        self.assertGreater(float(graded[0, 0, 2]), float(graded[0, 0, 1]) * 1.25)
+        self.assertGreater(float(graded[0, 0, 1]), float(graded[0, 0, 0]) * 3.0)
+        self.assertGreater(float(graded.mean()), float(ocean.mean()) * 1.70)
+
+    def test_atmosphere_is_a_thin_limb_layer(self):
+        yy, xx = np.mgrid[:128, :128]
+        radius = 42.0
+        distance = np.sqrt((xx - 64.0) ** 2 + (yy - 64.0) ** 2)
+        mask = (distance <= radius).astype(np.float32)
+        sz = np.sqrt(np.clip(1.0 - (distance / radius) ** 2, 0.0, 1.0))
+        rim, halo = atmosphere(mask, sz, (128, 128))
+
+        self.assertGreater(float(rim[64, 106]), float(rim[64, 64]) + 0.75)
+        self.assertGreater(float(halo[64, 107]), 0.02)
+        self.assertLess(float(halo[64, 120]), float(halo[64, 107]) * 0.30)
 
     def test_display_grade_maps_vegetation_to_teal_and_desert_to_gold(self):
         source = np.array(

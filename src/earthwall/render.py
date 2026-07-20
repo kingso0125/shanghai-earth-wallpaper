@@ -79,9 +79,9 @@ def _apple_natural_grade(
         rgb[..., 2] - np.maximum(rgb[..., 0], rgb[..., 1]),
     )[..., None]
     ocean *= daylight_mix
-    ocean_balance = np.array([0.86, 1.30, 1.34], dtype=np.float32)
+    ocean_balance = np.array([0.90, 1.62, 1.46], dtype=np.float32)
     rgb *= 1.0 - ocean + ocean * ocean_balance
-    rgb += ocean * np.array([0.0, 0.050, 0.080], dtype=np.float32)
+    rgb += ocean * np.array([0.006, 0.105, 0.130], dtype=np.float32)
 
     vegetation = smoothstep(
         0.012,
@@ -111,7 +111,7 @@ def _apple_natural_grade(
         keepdims=True,
     )
     final_chroma = rgb.max(axis=-1, keepdims=True) - rgb.min(axis=-1, keepdims=True)
-    saturation = 1.0 + smoothstep(0.025, 0.18, final_chroma) * daylight_mix * 0.12
+    saturation = 1.0 + smoothstep(0.025, 0.18, final_chroma) * daylight_mix * 0.20
     rgb = final_luminance + (rgb - final_luminance) * saturation
 
     daylight_haze = daylight_mix * 0.025
@@ -624,11 +624,11 @@ def render_one(
     earth = _sharpen_cloud_texture(earth, cloud_detail_alpha, day)
 
     rim, halo = atmosphere(mask.astype(np.float32), sz, preset.size)
-    earth += rim[..., None] * np.array([0.20, 0.58, 0.88], dtype=np.float32) * 0.40
+    earth += rim[..., None] * np.array([0.18, 0.70, 1.00], dtype=np.float32) * 0.48
     earth = np.clip(earth, 0.0, 1.0)
 
     output = space_background(preset.size, asset=background_asset)
-    output += halo[..., None] * np.array([0.15, 0.48, 0.82], dtype=np.float32) * 0.62
+    output += halo[..., None] * np.array([0.12, 0.56, 0.95], dtype=np.float32) * 0.50
     output = output * (1.0 - mask[..., None]) + earth * mask[..., None]
     output = np.clip(np.power(output, 0.97), 0.0, 1.0)
     destination.parent.mkdir(parents=True, exist_ok=True)
