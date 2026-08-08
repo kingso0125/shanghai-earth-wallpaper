@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import SHANGHAI
-from .render import render_mac_pair
+from .preview_sources import upgrade_v2_observation
+from .preview_v2 import render_production_mac_pair
 from .sources import Observation, _newest_cached_pair, acquire
 
 
@@ -54,7 +55,8 @@ def main(argv=None) -> int:
     parser.add_argument("--location-name", default="Shanghai")
     args = parser.parse_args(argv)
     observation = acquire_mac(args.cache)
-    manifest = render_mac_pair(
+    observation = upgrade_v2_observation(args.cache, observation)
+    manifest = render_production_mac_pair(
         observation,
         args.output,
         target_latitude=args.latitude,

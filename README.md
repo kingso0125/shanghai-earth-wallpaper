@@ -2,6 +2,8 @@
 
 每小时生成一组参考 Apple Astronomy Earth 质感的 iPhone Lock/Home 壁纸。主路径优先使用韩国 GK2A 原生全圆盘 GeoColor；默认将上海坐标 31.2304°N、121.4737°E 放在地球球面的正中心，启用手机定位后则将当前坐标放在同一视觉锚点，同时保持云层和地表为同一张卫星观测。
 
+正式渲染器为 `cinematic-earth-v2`：使用透视相机、真实可见光/红外云场、云下城市灯光、地形法线、暖色电影调色与柔化大气边缘。手机云端任务采用内存受控的工作分辨率并输出原生 1320×2868；Mac 在本机按 2560×1664 原生分辨率渲染同一视觉规则。
+
 在线预览：<https://kingso0125.github.io/shanghai-earth-wallpaper/>
 
 iPhone 快捷指令安装文件由 `shortcuts/更新上海实时地球.plist` 生成，显式区分 Lock/Home 目标；在 macOS 上运行 `scripts/build-shortcut.sh` 可重新签名并写入 `web/`。构建结束会解包校验签名，并确认发布包内的动作与源文件完全一致。

@@ -15,6 +15,7 @@ earthwall-qa = "earthwall.qa:main"
 earthwall-location-api = "earthwall.location_api:main"
 earthwall-mac = "earthwall.mac_cli:main"
 earthwall-mac-qa = "earthwall.mac_qa:main"
+earthwall-preview-v2 = "earthwall.preview_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -11,9 +11,10 @@ from PIL import Image
 from .config import RenderPreset, presets_for_location
 from .geometry import camera_grid
 from .lighting import daylight
+from .preview_v2 import perspective_camera_grid, presets_for_location as v2_presets_for_location
 
 
-def _metrics(path: Path, preset: RenderPreset, observation: datetime) -> dict:
+def _metrics(path: Path, preset, observation: datetime, *, perspective: bool = False) -> dict:
     rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     if (rgb.shape[1], rgb.shape[0]) != preset.size:
         raise ValueError(f"{path} has incorrect dimensions")
@@ -22,7 +23,10 @@ def _metrics(path: Path, preset: RenderPreset, observation: datetime) -> dict:
     cx, cy = preset.center_px
     earth_mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= preset.globe_radius_px**2
     earth_values = luminance[earth_mask]
-    _, _, visible, _, vectors = camera_grid(preset)
+    if perspective:
+        _, _, visible, _, vectors, _ = perspective_camera_grid(preset)
+    else:
+        _, _, visible, _, vectors = camera_grid(preset)
     day_fraction = float(daylight(vectors, observation)[visible].mean())
     gx = np.abs(np.diff(luminance, axis=1)).mean()
     gy = np.abs(np.diff(luminance, axis=0)).mean()
@@ -47,20 +51,22 @@ def audit(directory: Path) -> dict:
     rendered = datetime.fromisoformat(manifest["rendered_utc"].replace("Z", "+00:00"))
     age_hours = (rendered.astimezone(UTC) - observation.astimezone(UTC)).total_seconds() / 3600
     target = manifest.get("target", {})
-    lock, home = presets_for_location(
-        float(target.get("latitude", 31.2304)),
-        float(target.get("longitude", 121.4737)),
+    is_v2 = manifest.get("renderer") == "cinematic-earth-v2"
+    preset_factory = v2_presets_for_location if is_v2 else presets_for_location
+    lock, home = preset_factory(
+        float(target.get("latitude", 31.2304)), float(target.get("longitude", 121.4737))
     )
     result = {
         "observation_age_hours": age_hours,
-        "lock": _metrics(directory / "lock.jpg", lock, lighting),
-        "home": _metrics(directory / "home.jpg", home, lighting),
+        "lock": _metrics(directory / "lock.jpg", lock, lighting, perspective=is_v2),
+        "home": _metrics(directory / "home.jpg", home, lighting, perspective=is_v2),
     }
     failures = []
     if "CIRA SLIDER" in manifest["source"] and manifest.get("render_mode") not in {
         "fused_geostationary_plate_shanghai_meridian",
         "fused_geostationary_plate_location_meridian",
         "fused_geostationary_plate_location_centered",
+        "cinematic_v2_real_observation_layers",
     }:
         failures.append("CIRA observation was not transformed as one fused Earth/cloud plate")
     if manifest["source_status"] == "fresh" and not 0 <= age_hours <= 3.0:

@@ -11,9 +11,10 @@ from PIL import Image
 from .config import mac_presets_for_location
 from .geometry import camera_grid
 from .lighting import daylight
+from .preview_v2 import perspective_camera_grid, presets_for_mac_location
 
 
-def _metrics(path: Path, preset, lighting: datetime) -> dict:
+def _metrics(path: Path, preset, lighting: datetime, *, perspective: bool = False) -> dict:
     rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     if (rgb.shape[1], rgb.shape[0]) != preset.size:
         raise ValueError(f"{path} has incorrect dimensions")
@@ -26,7 +27,10 @@ def _metrics(path: Path, preset, lighting: datetime) -> dict:
     space_mask = ~earth_mask
     earth = luminance[earth_mask]
     space = luminance[space_mask]
-    _, _, visible, _, vectors = camera_grid(preset)
+    if perspective:
+        _, _, visible, _, vectors, _ = perspective_camera_grid(preset)
+    else:
+        _, _, visible, _, vectors = camera_grid(preset)
     day_fraction = float(daylight(vectors, lighting)[visible].mean())
     return {
         "earth_mean": float(earth.mean()),
@@ -58,11 +62,15 @@ def audit(directory: Path) -> dict:
     rendered = datetime.fromisoformat(manifest["rendered_utc"].replace("Z", "+00:00"))
     age_hours = (rendered.astimezone(UTC) - observation.astimezone(UTC)).total_seconds() / 3600
     target = manifest["target"]
-    presets = mac_presets_for_location(float(target["latitude"]), float(target["longitude"]))
+    is_v2 = manifest.get("renderer") == "cinematic-earth-v2"
+    preset_factory = presets_for_mac_location if is_v2 else mac_presets_for_location
+    presets = preset_factory(float(target["latitude"]), float(target["longitude"]))
     result = {"observation_age_hours": age_hours}
     failures = []
     for preset in presets:
-        metrics = _metrics(directory / f"mac-{preset.name}.jpg", preset, lighting)
+        metrics = _metrics(
+            directory / f"mac-{preset.name}.jpg", preset, lighting, perspective=is_v2
+        )
         result[preset.name] = metrics
         if preset.name == "lock" and not metrics["globe_fully_visible"]:
             failures.append(f"mac {preset.name} globe is cropped")

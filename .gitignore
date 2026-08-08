@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 cache/
 output/archive/
+output/preview-v2/
 build/
 public/
 outputs/

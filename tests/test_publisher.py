@@ -21,7 +21,7 @@ class PublisherTests(unittest.TestCase):
                 return {"rendered_utc": "2026-07-14T14:17:00Z"}
 
             with patch("earthwall.publisher.acquire", return_value=object()), patch(
-                "earthwall.publisher.render_pair", side_effect=fake_render
+                "earthwall.publisher.render_production_pair", side_effect=fake_render
             ), patch(
                 "earthwall.publisher.audit", return_value={"passed": True, "failures": []}
             ):

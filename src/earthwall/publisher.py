@@ -8,8 +8,8 @@ import tempfile
 from pathlib import Path
 
 from .location import Location
+from .preview_v2 import render_production_pair
 from .qa import audit
-from .render import render_pair
 from .sources import acquire
 
 
@@ -35,7 +35,7 @@ class Publisher:
             staging.chmod(0o755)
             try:
                 observation = acquire(self.cache)
-                manifest = render_pair(
+                manifest = render_production_pair(
                     observation,
                     staging,
                     target_latitude=location.latitude,
