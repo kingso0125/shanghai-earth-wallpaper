@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import SHANGHAI
@@ -16,6 +17,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output", type=Path, default=Path("output/preview-v2"))
     result.add_argument("--latitude", type=float, default=SHANGHAI[0])
     result.add_argument("--longitude", type=float, default=SHANGHAI[1])
+    result.add_argument(
+        "--lighting-time",
+        type=lambda value: datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC),
+    )
+    result.add_argument("--apple-night", action="store_true")
     return result
 
 
@@ -28,6 +34,8 @@ def main(argv=None) -> int:
         args.output,
         latitude=args.latitude,
         longitude=args.longitude,
+        lighting_time=args.lighting_time,
+        apple_night=args.apple_night,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0

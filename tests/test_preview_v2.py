@@ -9,6 +9,8 @@ from earthwall.preview_v2 import (
     V2_LOCK,
     V2_MAC_HOME,
     V2_MAC_LOCK,
+    _apple_night_ir_cloud,
+    _apple_night_midtone_grade,
     _edge_alpha,
     aces_tonemap,
     atmosphere_scattering,
@@ -72,6 +74,40 @@ class PreviewV2Tests(unittest.TestCase):
         material = cloud_material(alpha, observed, np.full_like(alpha, -0.5))
         self.assertLess(float(material.radiance.mean()), 0.03)
         self.assertGreater(float(material.opacity.mean()), 0.55)
+
+    def test_apple_night_cloud_material_is_visible_but_not_day_white(self) -> None:
+        alpha = np.full((24, 24), 0.92, dtype=np.float32)
+        observed = np.tile(np.linspace(0.16, 0.82, 24, dtype=np.float32), (24, 1))
+        material = cloud_material(
+            alpha,
+            observed,
+            np.full_like(alpha, -0.5),
+            apple_night=True,
+        )
+        self.assertGreater(float(material.radiance.mean()), 0.008)
+        self.assertLess(float(material.radiance.mean()), 0.08)
+        self.assertGreater(
+            float(material.radiance[:, -2].mean()),
+            float(material.radiance[:, 1].mean()),
+        )
+        self.assertGreater(float(material.opacity.mean()), 0.06)
+
+    def test_apple_night_ir_decoder_preserves_continuous_cloud_depth(self) -> None:
+        infrared = np.zeros((32, 32, 4), dtype=np.float32)
+        infrared[..., :3] = 0.45
+        infrared[:, 8:16, :3] = np.array([0.20, 0.48, 0.72], dtype=np.float32)
+        infrared[:, 16:24, :3] = np.array([0.05, 0.85, 0.20], dtype=np.float32)
+        alpha, texture = _apple_night_ir_cloud(infrared)
+        self.assertEqual(alpha.shape, infrared.shape[:2])
+        self.assertGreater(float(alpha[:, 12].mean()), float(alpha[:, 2].mean()))
+        self.assertGreater(float(alpha[:, 20].mean()), float(alpha[:, 2].mean()))
+        self.assertGreater(float(texture.std()), 0.05)
+
+    def test_apple_night_grade_opens_midtones_without_lifting_black(self) -> None:
+        earth = np.array([[[0.0, 0.0, 0.0], [0.008, 0.010, 0.012]]], dtype=np.float32)
+        graded = _apple_night_midtone_grade(earth, np.ones((1, 2), dtype=np.float32))
+        self.assertTrue(np.array_equal(graded[0, 0], earth[0, 0]))
+        self.assertGreater(float(graded[0, 1].mean()), float(earth[0, 1].mean()))
 
     def test_atmosphere_is_thin_and_brighter_on_sunward_limb(self) -> None:
         yy, xx = np.mgrid[-1:1:65j, -1:1:65j]

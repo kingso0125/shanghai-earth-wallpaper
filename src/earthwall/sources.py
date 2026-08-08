@@ -155,6 +155,26 @@ def _acquire_gibs_layers(
 ) -> Observation:
     capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
     timestamp = latest_common_time(capabilities)
+    cached = _newest_cached_pair(cache)
+    now = datetime.now(UTC)
+    if (
+        cached is not None
+        and timestamp < cached[0] <= now
+        and (now - cached[0]).total_seconds() <= 3 * 3600
+    ):
+        cached_timestamp, cached_visible, cached_infrared = cached
+        return Observation(
+            cached_timestamp,
+            cached_visible,
+            cached_infrared,
+            None,
+            base,
+            lights,
+            "fresh",
+            "NASA GIBS / JMA Himawari-9",
+            140.7,
+            terrain,
+        )
     stamp = timestamp.strftime("%Y%m%dT%H%MZ")
     visible = cache / f"himawari-{stamp}-visible.png"
     infrared = cache / f"himawari-{stamp}-infrared.png"

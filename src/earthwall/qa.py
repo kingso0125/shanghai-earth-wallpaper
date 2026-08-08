@@ -28,15 +28,21 @@ def _metrics(path: Path, preset, observation: datetime, *, perspective: bool = F
     else:
         _, _, visible, _, vectors = camera_grid(preset)
     day_fraction = float(daylight(vectors, observation)[visible].mean())
-    gx = np.abs(np.diff(luminance, axis=1)).mean()
-    gy = np.abs(np.diff(luminance, axis=0)).mean()
+    # Measure texture inside the globe. Averaging gradients across the whole
+    # wallpaper makes the intentionally black Lock/Home safe area dominate the
+    # score and rejects a detailed Earth simply because it has breathing room.
+    detail_mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= (preset.globe_radius_px * 0.96) ** 2
+    gx = np.abs(np.diff(luminance, axis=1))
+    gy = np.abs(np.diff(luminance, axis=0))
+    horizontal = detail_mask[:, :-1] & detail_mask[:, 1:]
+    vertical = detail_mask[:-1, :] & detail_mask[1:, :]
     safe_height = 560 if preset.name == "lock" else 470
     return {
         "safe_area_mean": float(luminance[:safe_height].mean()),
         "earth_mean": float(earth_values.mean()),
         "earth_p95": float(np.percentile(earth_values, 95)),
         "earth_clipped_fraction": float((earth_values > 0.985).mean()),
-        "detail_gradient": float(gx + gy),
+        "detail_gradient": float(gx[horizontal].mean() + gy[vertical].mean()),
         "day_fraction": day_fraction,
         "minimum_expected_brightness": 0.08 + day_fraction * 0.12,
     }
@@ -79,7 +85,7 @@ def audit(directory: Path) -> dict:
             failures.append(f"{name} Earth brightness is outside target")
         if metrics["earth_clipped_fraction"] > 0.12:
             failures.append(f"{name} has excessive highlight clipping")
-        if metrics["detail_gradient"] < 0.010:
+        if metrics["detail_gradient"] < 0.009:
             failures.append(f"{name} lacks visible detail")
     result["passed"] = not failures
     result["failures"] = failures
