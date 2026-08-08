@@ -51,7 +51,7 @@ iPhone 端配置见 [docs/iphone-shortcut.md](docs/iphone-shortcut.md)。
 
 阿里云 HTTPS 接口接收快捷指令单次运行时取得的经纬度，不持续追踪手机。新位置与当前中心距离**超过 80 公里**才更新并立即生成；80 公里以内沿用原构图，避免 GPS 漂移。服务只保存最新位置，不保存轨迹，定位无效时继续使用上次位置；首次部署的默认位置仍为上海。
 
-动态壁纸由 `https://earthwall.47-116-45-167.nip.io/earthwall/lock.jpg` 与 `home.jpg` 提供，并返回 `Cache-Control: no-store`，避免 GitHub Pages 固定 URL 的十分钟缓存。阿里云上的 `earthwall-render.timer` 同样在每小时 `:17` 生成，Mac 无需开机。
+手机正式图片继续由 GitHub Pages HTTPS 固定地址提供，确保无需 ICP 备案也能稳定访问。阿里云上的 `earthwall-render.timer` 同样在每小时 `:17` 独立生成并保留最近两个原子版本，Mac 无需开机；服务器 `nip.io` 域名目前只用于内部检查，不作为 iPhone 公网下载地址。
 
 ## 数据降级
 
