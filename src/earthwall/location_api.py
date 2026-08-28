@@ -119,7 +119,11 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
-    store = LocationStore(args.state, args.threshold_km)
+    store = LocationStore(
+        args.state,
+        args.threshold_km,
+        apply_travel_override=True,
+    )
     publisher = Publisher(args.root, args.cache, args.lock)
     if args.publish_once:
         publisher.publish(store.load())

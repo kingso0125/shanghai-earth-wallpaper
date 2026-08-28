@@ -7,7 +7,7 @@ name = "earthwall"
 version = "0.1.0"
 description = "Shanghai-centered hourly Earth wallpapers"
 requires-python = ">=3.11"
-dependencies = ["numpy>=2.0", "Pillow>=11.0"]
+dependencies = ["certifi>=2025.0", "numpy>=2.0", "Pillow>=11.0"]
 
 [project.scripts]
 earthwall = "earthwall.cli:main"

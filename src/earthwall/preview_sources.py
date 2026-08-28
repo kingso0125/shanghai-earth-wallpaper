@@ -69,7 +69,7 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
     base = _download(BASE_LAYER, None, v2_cache / "blue-marble-8k.png")
     lights = _download(LIGHTS_LAYER, None, v2_cache / "city-lights-8k.png")
     terrain = _download(TERRAIN_LAYER, None, v2_cache / "terrain-relief-8k.png")
-    if observation.geocolor is not None:
+    if observation.geocolor is not None or observation.source.startswith("EUMETSAT"):
         return replace(observation, base=base, lights=lights, terrain=terrain)
 
     stamp = observation.timestamp.astimezone(UTC).strftime("%Y%m%dT%H%MZ")

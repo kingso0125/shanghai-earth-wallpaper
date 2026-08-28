@@ -5,15 +5,17 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from .config import SHANGHAI
+from .config import SHANGHAI, resolve_target
 from .preview_sources import upgrade_v2_observation
 from .preview_v2 import render_production_mac_pair
-from .sources import Observation, _newest_cached_pair, acquire
+from .sources import Observation, _newest_cached_pair, acquire_for_target
 
 
-def acquire_mac(cache: Path) -> Observation:
+def acquire_mac(cache: Path, longitude: float = SHANGHAI[1]) -> Observation:
     """Prefer a newer server-validated raw pair without changing phone acquisition."""
-    observation = acquire(cache)
+    observation = acquire_for_target(cache, longitude)
+    if observation.source.startswith("EUMETSAT"):
+        return observation
     manifest_path = cache / "server-manifest.json"
     cached = _newest_cached_pair(cache)
     if not manifest_path.exists() or cached is None:
@@ -54,14 +56,17 @@ def main(argv=None) -> int:
     parser.add_argument("--longitude", type=float, default=SHANGHAI[1])
     parser.add_argument("--location-name", default="Shanghai")
     args = parser.parse_args(argv)
-    observation = acquire_mac(args.cache)
+    latitude, longitude, location_name = resolve_target(
+        args.latitude, args.longitude, args.location_name
+    )
+    observation = acquire_mac(args.cache, longitude)
     observation = upgrade_v2_observation(args.cache, observation)
     manifest = render_production_mac_pair(
         observation,
         args.output,
-        target_latitude=args.latitude,
-        target_longitude=args.longitude,
-        target_name=args.location_name,
+        target_latitude=latitude,
+        target_longitude=longitude,
+        target_name=location_name,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0

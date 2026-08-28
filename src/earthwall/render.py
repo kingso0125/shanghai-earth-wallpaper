@@ -15,9 +15,9 @@ from .style import atmosphere, smoothstep, space_background
 
 
 ACKNOWLEDGEMENT = (
-    "Satellite imagery: Korea Meteorological Administration (KMA), "
-    "Japan Meteorological Agency (JMA), NOAA/NESDIS, "
-    "and Colorado State University/CIRA, processed through CIRA SLIDER. "
+    "Satellite imagery: EUMETSAT Meteosat Third Generation/FCI; "
+    "Japan Meteorological Agency (JMA), Korea Meteorological Administration (KMA), "
+    "NOAA/NESDIS, NASA GIBS, and Colorado State University/CIRA. "
     "Static Earth and city-light imagery: NASA Earth Observatory/GIBS. "
     "Terrain relief: NASA/METI ASTER GDEM through NASA GIBS."
 )

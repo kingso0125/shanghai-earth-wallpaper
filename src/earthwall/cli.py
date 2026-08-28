@@ -4,9 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from .config import SHANGHAI
+from .config import SHANGHAI, resolve_target
 from .preview_v2 import render_production_pair
-from .sources import acquire
+from .sources import acquire_for_target
 
 
 def parser() -> argparse.ArgumentParser:
@@ -21,13 +21,16 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
-    observation = acquire(args.cache)
+    latitude, longitude, location_name = resolve_target(
+        args.latitude, args.longitude, args.location_name
+    )
+    observation = acquire_for_target(args.cache, longitude)
     manifest = render_production_pair(
         observation,
         args.output,
-        target_latitude=args.latitude,
-        target_longitude=args.longitude,
-        target_name=args.location_name,
+        target_latitude=latitude,
+        target_longitude=longitude,
+        target_name=location_name,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0

@@ -1,7 +1,30 @@
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 SHANGHAI = (31.2304, 121.4737)
+PARIS = (48.8566, 2.3522)
+PARIS_OVERRIDE_UNTIL_UTC = datetime(2026, 9, 4, 9, 55, tzinfo=UTC)
 LOCK_LATITUDE_OFFSET = -6.0
+
+
+def travel_override(now: datetime | None = None) -> tuple[float, float, str] | None:
+    """Return the temporary travel center while its fixed window is active."""
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        raise ValueError("travel override time must be timezone-aware")
+    if current.astimezone(UTC) < PARIS_OVERRIDE_UNTIL_UTC:
+        return PARIS[0], PARIS[1], "Paris"
+    return None
+
+
+def resolve_target(
+    latitude: float,
+    longitude: float,
+    name: str,
+    *,
+    now: datetime | None = None,
+) -> tuple[float, float, str]:
+    return travel_override(now) or (latitude, longitude, name)
 
 
 @dataclass(frozen=True)

@@ -11,8 +11,10 @@ from earthwall.config import (
     HOME,
     LOCK,
     LOCK_LATITUDE_OFFSET,
+    PARIS,
     SHANGHAI,
     presets_for_location,
+    resolve_target,
 )
 from earthwall.geometry import camera_grid, sample_himawari_plate
 from earthwall.lighting import daylight, sun_vector
@@ -83,6 +85,32 @@ class CoreTests(unittest.TestCase):
             float(np.rad2deg(lat[y, x])), 23.1291 + LOCK_LATITUDE_OFFSET, places=2
         )
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), 113.2644, places=2)
+
+    def test_paris_travel_override_expires_back_to_requested_target(self):
+        active = resolve_target(
+            *SHANGHAI,
+            "Shanghai",
+            now=datetime(2026, 9, 4, 9, 54, tzinfo=UTC),
+        )
+        expired = resolve_target(
+            *SHANGHAI,
+            "Shanghai",
+            now=datetime(2026, 9, 4, 9, 55, tzinfo=UTC),
+        )
+        self.assertEqual(active, (*PARIS, "Paris"))
+        self.assertEqual(expired, (*SHANGHAI, "Shanghai"))
+
+    def test_travel_override_blocks_location_store_writes(self):
+        with TemporaryDirectory() as directory, patch(
+            "earthwall.location.travel_override",
+            return_value=(*PARIS, "Paris"),
+        ):
+            path = Path(directory) / "location.json"
+            store = LocationStore(path, apply_travel_override=True)
+            current, _, changed = store.update(Location(40.7128, -74.0060, "New York"))
+            self.assertFalse(changed)
+            self.assertEqual(current.name, "Paris")
+            self.assertFalse(path.exists())
 
     def test_location_store_requires_more_than_80_km(self):
         import tempfile

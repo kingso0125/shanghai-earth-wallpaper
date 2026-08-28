@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import SHANGHAI
+from .config import SHANGHAI, travel_override
 
 
 EARTH_RADIUS_KM = 6371.0088
@@ -45,13 +45,29 @@ def haversine_km(first: Location, second: Location) -> float:
 
 
 class LocationStore:
-    def __init__(self, path: Path, threshold_km: float = 80.0):
+    def __init__(
+        self,
+        path: Path,
+        threshold_km: float = 80.0,
+        *,
+        apply_travel_override: bool = False,
+    ):
         if threshold_km <= 0:
             raise ValueError("threshold_km must be positive")
         self.path = path
         self.threshold_km = threshold_km
+        self.apply_travel_override = apply_travel_override
+
+    def _override(self) -> Location | None:
+        if not self.apply_travel_override:
+            return None
+        active = travel_override()
+        return Location(*active) if active is not None else None
 
     def load(self) -> Location:
+        override = self._override()
+        if override is not None:
+            return override
         if not self.path.exists():
             return DEFAULT_LOCATION
         payload = json.loads(self.path.read_text(encoding="utf-8"))
@@ -63,6 +79,9 @@ class LocationStore:
         )
 
     def update(self, candidate: Location) -> tuple[Location, float, bool]:
+        override = self._override()
+        if override is not None:
+            return override, haversine_km(override, candidate), False
         current = self.load()
         distance = haversine_km(current, candidate)
         if distance <= self.threshold_km:

@@ -10,7 +10,7 @@ from pathlib import Path
 from .location import Location
 from .preview_v2 import render_production_pair
 from .qa import audit
-from .sources import acquire
+from .sources import acquire_for_target
 
 
 class Publisher:
@@ -34,7 +34,7 @@ class Publisher:
             # atomically published release directory after the symlink swap.
             staging.chmod(0o755)
             try:
-                observation = acquire(self.cache)
+                observation = acquire_for_target(self.cache, location.longitude)
                 manifest = render_production_pair(
                     observation,
                     staging,

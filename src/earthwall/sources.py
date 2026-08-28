@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import certifi
 from PIL import Image
 
 from .config import (
@@ -40,12 +41,7 @@ class Observation:
 
 def _request(url: str, timeout: int = 90) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "earthwall/0.1"})
-    system_bundle = Path("/etc/ssl/cert.pem")
-    context = (
-        ssl.create_default_context(cafile=str(system_bundle))
-        if system_bundle.exists()
-        else ssl.create_default_context()
-    )
+    context = ssl.create_default_context(cafile=certifi.where())
     with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
         return response.read()
 
@@ -211,6 +207,63 @@ CIRA_SOURCES = (
     ("himawari", "CIRA SLIDER / JMA Himawari-9", 140.7),
     ("gk2a", "CIRA SLIDER / KMA GK2A", 128.2),
 )
+EUMETSAT_CAPABILITIES = (
+    "https://view.eumetsat.int/geoserver/wms?"
+    "SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0"
+)
+EUMETSAT_ENDPOINT = "https://view.eumetsat.int/geoserver/wms"
+EUMETSAT_VISIBLE_LAYER = "mtg_fd:vis06_hrfi"
+EUMETSAT_IR_LAYER = "mtg_fd:ir105_hrfi"
+
+
+def _eumetsat_wms_url(layer: str, timestamp: datetime) -> str:
+    style = (
+        "mtg_fd:mtg_fd_ir105_hrfi_grayscale"
+        if layer == EUMETSAT_IR_LAYER
+        else "raster"
+    )
+    params = {
+        "SERVICE": "WMS",
+        "REQUEST": "GetMap",
+        "VERSION": "1.1.1",
+        "LAYERS": layer,
+        "STYLES": style,
+        "FORMAT": "image/png",
+        "TRANSPARENT": "true",
+        "SRS": "EPSG:4326",
+        "BBOX": "-180,-90,180,90",
+        "WIDTH": "4096",
+        "HEIGHT": "2048",
+        "TIME": timestamp.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return f"{EUMETSAT_ENDPOINT}?{urllib.parse.urlencode(params, safe=':,')}"
+
+
+def _acquire_eumetsat_layers(cache: Path) -> tuple[datetime, Path, Path]:
+    capabilities = _request(EUMETSAT_CAPABILITIES).decode("utf-8")
+    timestamp = min(
+        _layer_default_time(capabilities, EUMETSAT_VISIBLE_LAYER),
+        _layer_default_time(capabilities, EUMETSAT_IR_LAYER),
+    )
+    now = datetime.now(UTC)
+    if timestamp > now or (now - timestamp).total_seconds() > 3 * 3600:
+        raise ValueError("no recent EUMETSAT Meteosat observation")
+    stamp = timestamp.strftime("%Y%m%dT%H%MZ")
+    visible = cache / f"meteosat-{stamp}-visible.png"
+    infrared = cache / f"meteosat-{stamp}-infrared.png"
+    if not _valid_image(visible):
+        _atomic_download(_eumetsat_wms_url(EUMETSAT_VISIBLE_LAYER, timestamp), visible)
+    if not _valid_image(infrared):
+        _atomic_download(_eumetsat_wms_url(EUMETSAT_IR_LAYER, timestamp), infrared)
+    for suffix in ("visible", "infrared"):
+        old_files = sorted(
+            cache.glob(f"meteosat-*-{suffix}.png"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for old in old_files[3:]:
+            old.unlink(missing_ok=True)
+    return timestamp, visible, infrared
 
 
 def _acquire_cira_geocolor(cache: Path, satellite: str) -> tuple[datetime, Path]:
@@ -222,9 +275,7 @@ def _acquire_cira_geocolor(cache: Path, satellite: str) -> tuple[datetime, Path]
         timestamp = datetime.strptime(timestamp_text, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
         if not (timestamp <= now and (now - timestamp).total_seconds() <= 3 * 3600):
             continue
-        destination = cache / (
-            f"cira-{satellite}-{timestamp.strftime('%Y%m%dT%H%MZ')}-geocolor.png"
-        )
+        destination = cache / f"cira-{satellite}-{timestamp.strftime('%Y%m%dT%H%MZ')}-geocolor.png"
         if _valid_image(destination, expected_size=(2752, 2752)):
             return timestamp, destination
 
@@ -261,6 +312,26 @@ def _acquire_cira_geocolor(cache: Path, satellite: str) -> tuple[datetime, Path]
     if last_error is not None:
         raise last_error
     raise ValueError(f"no recent CIRA {satellite} observation")
+
+
+def acquire_for_target(cache: Path, longitude: float) -> Observation:
+    """Select a live geostationary cloud source that covers the target."""
+    base_observation = acquire(cache)
+    if not -15.0 <= longitude <= 5.0:
+        return base_observation
+    timestamp, visible, infrared = _acquire_eumetsat_layers(cache)
+    return Observation(
+        timestamp=timestamp,
+        visible=visible,
+        infrared=infrared,
+        geocolor=None,
+        base=base_observation.base,
+        lights=base_observation.lights,
+        status="fresh",
+        source="EUMETSAT Meteosat Third Generation FCI",
+        satellite_longitude=0.0,
+        terrain=base_observation.terrain,
+    )
 
 
 def acquire(cache: Path) -> Observation:
