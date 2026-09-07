@@ -21,6 +21,7 @@ from .render import (
 )
 from .sources import Observation, sha256
 from .style import smoothstep, space_background
+from .thermal import sample_coldness
 
 
 @dataclass(frozen=True)
@@ -85,14 +86,14 @@ def preview_output(name: str) -> Path:
 def presets_for_location(latitude: float, longitude: float) -> tuple[V2Preset, ...]:
     return (
         replace(V2_LOCK, target_lat=np.clip(latitude - 6.0, -90.0, 90.0), target_lon=longitude),
-        replace(V2_HOME, target_lon=longitude),
+        replace(V2_HOME, target_lat=float(np.clip(latitude - SHANGHAI[0] + 5.0, -80.0, 80.0)), target_lon=longitude),
     )
 
 
 def presets_for_mac_location(latitude: float, longitude: float) -> tuple[V2Preset, ...]:
     return (
         replace(V2_MAC_LOCK, target_lat=np.clip(latitude - 6.0, -90.0, 90.0), target_lon=longitude),
-        replace(V2_MAC_HOME, target_lon=longitude),
+        replace(V2_MAC_HOME, target_lat=float(np.clip(latitude - SHANGHAI[0] + 5.0, -80.0, 80.0)), target_lon=longitude),
     )
 
 
@@ -165,6 +166,14 @@ def _load(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGBA"), dtype=np.float32) / 255.0
 
 
+def _sample_map(path: Path, latitude: np.ndarray, longitude: np.ndarray) -> np.ndarray:
+    # Keep the large source raster in uint8 until sampling. This makes native
+    # resolution renders viable without a 512 MB float copy per 8K texture.
+    with Image.open(path) as image:
+        pixels = np.asarray(image.convert("RGBA"))
+        return sample_equirectangular(pixels, latitude, longitude) / np.float32(255.0)
+
+
 def _blur_scalar(values: np.ndarray, radius: float) -> np.ndarray:
     image = Image.fromarray(np.uint8(np.clip(values, 0.0, 1.0) * 255), "L")
     return np.asarray(image.filter(ImageFilter.GaussianBlur(radius)), dtype=np.float32) / 255.0
@@ -195,6 +204,7 @@ def _shift(values: np.ndarray, dx: int, dy: int) -> np.ndarray:
 def _apple_night_ir_cloud(
     infrared: np.ndarray,
     surface: np.ndarray | None = None,
+    thermal: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Decode the colour-enhanced Band 13 plate into continuous night clouds.
 
@@ -202,6 +212,20 @@ def _apple_night_ir_cloud(
     Preserve both as a continuous field; thresholding the palette creates the
     flat paper-like cloud patches that this profile is designed to avoid.
     """
+    if thermal is not None:
+        # Temperature order, not colour saturation, supplies continuous depth.
+        # A single IR channel remains a proxy: do not invent cloud micro-noise.
+        field = np.clip(thermal, 0, 1)
+        body = smoothstep(0.20, 0.79, field)
+        if surface is not None:
+            ocean = smoothstep(0.012, 0.09, surface[..., 2] - np.maximum(surface[..., 0], surface[..., 1]))
+            anomaly = np.maximum(field - _blur_scalar(field, 24), 0)
+            confidence = 0.55 + 0.45 * np.maximum(smoothstep(0.015, 0.10, anomaly), smoothstep(0.46, 0.64, field))
+            body *= ocean + (1 - ocean) * confidence
+        fine = _blur_scalar(body, 0.55)
+        broad = _blur_scalar(body, 5)
+        texture = np.clip(body + (body - fine) * 0.15 + (fine - broad) * 0.12, 0, 1)
+        return np.clip(body * 0.92, 0, 0.92).astype(np.float32), texture.astype(np.float32)
     rgb = np.clip(infrared[..., :3], 0.0, 1.0)
     luminance = np.sum(
         rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1
@@ -254,19 +278,20 @@ def aces_tonemap(rgb: np.ndarray) -> np.ndarray:
     return np.clip((rgb * (a * rgb + b)) / (rgb * (c * rgb + d) + e), 0.0, 1.0)
 
 
-def _material_albedo(base: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _material_albedo(base: np.ndarray, water: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     rgb = np.clip(base[..., :3], 0.0, 1.0)
     luminance = np.sum(rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1)
-    ocean = smoothstep(0.012, 0.115, rgb[..., 2] - np.maximum(rgb[..., 0], rgb[..., 1]))
-    ocean = _blur_scalar(ocean, 1.2)
+    ocean = (water if water is not None else
+             smoothstep(0.012, 0.115, rgb[..., 2] - np.maximum(rgb[..., 0], rgb[..., 1])))
+    ocean = _blur_scalar(ocean, 0.6)
     land = 1.0 - ocean
 
-    coast = np.clip(ocean * (1.0 - _blur_scalar(ocean, 16.0)) * 5.0, 0.0, 1.0)
-    deep_ocean = np.array([0.045, 0.275, 0.455], dtype=np.float32)
-    shallow_ocean = np.array([0.070, 0.465, 0.585], dtype=np.float32)
+    coast = np.clip(ocean * (1.0 - _blur_scalar(ocean, 16.0)) * 2.0, 0.0, 1.0)
+    deep_ocean = np.array([0.034, 0.235, 0.405], dtype=np.float32)
+    shallow_ocean = np.array([0.055, 0.300, 0.390], dtype=np.float32)
     ocean_tone = deep_ocean * (1.0 - coast[..., None]) + shallow_ocean * coast[..., None]
     ocean_tone *= (0.76 + luminance[..., None] * 0.72)
-    rgb = rgb * (1.0 - ocean[..., None] * 0.82) + ocean_tone * ocean[..., None] * 0.82
+    rgb = rgb * (1.0 - ocean[..., None] * 0.88) + ocean_tone * ocean[..., None] * 0.88
 
     vegetation = smoothstep(0.018, 0.13, rgb[..., 1] - np.maximum(rgb[..., 0], rgb[..., 2])) * land
     warm = rgb[..., 0] - rgb[..., 2]
@@ -277,7 +302,7 @@ def _material_albedo(base: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarr
     rgb = rgb * (1.0 - desert[..., None] * 0.15) + golden_land * desert[..., None] * 0.15
 
     lum = np.sum(rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1, keepdims=True)
-    rgb = lum + (rgb - lum) * 1.025
+    rgb = lum + (rgb - lum) * 1.065
     rgb *= np.array([1.025, 1.010, 0.975], dtype=np.float32)
     ocean_soft = _blur_rgb(np.clip(rgb, 0.0, 1.0), 0.85)
     rgb = rgb * (1.0 - ocean[..., None] * 0.34) + ocean_soft * ocean[..., None] * 0.34
@@ -299,7 +324,9 @@ def _relief_normals(
     height = np.clip(gray - broad, -0.16, 0.16)
     gradient_y, gradient_x = np.gradient(height)
     forward, east, north = _basis(preset.target_lat, preset.target_lon)
-    strength = 22.0 * land * smoothstep(0.18, 0.88, np.abs(height) + 0.12)
+    # This is a shaded-relief image, not measured elevation. Keep its normal
+    # perturbation restrained so map palette/tile edges cannot become mountains.
+    strength = 9.0 * land * smoothstep(0.18, 0.88, np.abs(height) + 0.12)
     perturbed = (
         vectors
         - gradient_x[..., None] * east * strength[..., None]
@@ -331,7 +358,7 @@ def _surface_radiance(
     radiance = _linear(albedo) * base_light[..., None]
     radiance += (
         ocean * daylight
-    )[..., None] * np.array([0.020, 0.074, 0.124], dtype=np.float32)
+    )[..., None] * np.array([0.004, 0.024, 0.048], dtype=np.float32)
 
     half_vector = sun + view
     half_vector /= np.maximum(np.linalg.norm(half_vector, axis=-1, keepdims=True), 1e-6)
@@ -350,7 +377,7 @@ def _surface_radiance(
             axis=-1,
         )
         material_midtones = np.power(smoothstep(0.08, 0.58, albedo_luminance), 0.78)
-        radiance += (night * material_midtones)[..., None] * np.array(
+        radiance += (night * material_midtones * (1.0 - ocean))[..., None] * np.array(
             [0.0300, 0.0282, 0.0260], dtype=np.float32
         )
         radiance += (ocean * night)[..., None] * np.array(
@@ -378,6 +405,7 @@ def cloud_material(
     solar_cos: np.ndarray,
     *,
     apple_night: bool = False,
+    detail_scale: float = 1.0,
 ) -> CloudProperties:
     """Build a display-calibrated cloud material from real satellite fields.
 
@@ -387,6 +415,28 @@ def cloud_material(
     """
     alpha = np.clip(alpha, 0.0, 1.0)
     observed = np.clip(observed, 0.0, 1.0)
+    if apple_night:
+        # Opacity is a property of the cloud, not of whether the sun is up.
+        # Preserve the observed wisps and dense cores without thresholding them
+        # into flat white masks, and keep cities underneath the same opacity.
+        fine = _blur_scalar(observed, 0.65 * detail_scale)
+        broad = _blur_scalar(observed, 5.0 * detail_scale)
+        structure = np.clip(observed + (observed - fine) * 0.18 + (fine - broad) * 0.16, 0, 1)
+        optical_depth = -np.log(np.maximum(1.0 - alpha * 0.97, 0.02))
+        # Increase the optical path of medium/thick bodies, not their extent.
+        # Thin cirrus remains translucent; dense cores hide the terrain/lights.
+        body = smoothstep(0.22, 0.85, alpha)
+        opacity = 1.0 - np.exp(-optical_depth * (0.64 + structure * 0.62 + body * 0.48))
+        opacity = opacity * 0.88 + _blur_scalar(opacity, 0.5 * detail_scale) * 0.12
+        opacity *= alpha > 0
+        day = smoothstep(-0.10, 0.30, solar_cos)
+        reflectance = 0.40 + np.power(structure, 0.88) * 0.47
+        day_radiance = _linear(reflectance[..., None] * np.array([1.0, 0.985, 0.958], dtype=np.float32))
+        day_radiance *= (0.36 + np.power(np.clip(solar_cos, 0, 1), 0.6) * 0.74)[..., None]
+        night_reflectance = 0.22 + np.power(structure, 0.82) * 0.198
+        night_radiance = _linear(night_reflectance[..., None] * np.array([0.91, 0.94, 1.0], dtype=np.float32))
+        radiance = day_radiance * day[..., None] + night_radiance * (1.0 - day[..., None])
+        return CloudProperties(np.clip(opacity, 0, 0.975).astype(np.float32), radiance.astype(np.float32))
     daylight_curve = smoothstep(-0.08, 0.32, solar_cos)
     daylight = np.power(daylight_curve, 1.05 if apple_night else 0.62)
 
@@ -400,68 +450,13 @@ def cloud_material(
     day_radiance = _linear(day_srgb[..., None] * day_tone)
     day_radiance *= (0.80 + daylight[..., None] * 0.24)
 
-    if apple_night:
-        # Night clouds need their own dim skylight material.  Keeping them
-        # slightly brighter than the ground reveals cloud tops while their
-        # alpha still occludes city lights underneath.
-        fine_alpha = _blur_scalar(alpha, 1.1)
-        broad_alpha = _blur_scalar(alpha, 7.0)
-        optical_relief = np.clip(
-            (alpha - fine_alpha) * 0.50 + (fine_alpha - broad_alpha) * 0.34,
-            -0.11,
-            0.11,
-        )
-        thin = smoothstep(0.045, 0.38, alpha)
-        body = smoothstep(0.24, 0.76, alpha)
-        top = smoothstep(0.58, 0.92, alpha)
-        cloud_detail = np.clip(
-            observed + (observed - medium) * 0.18 + (medium - broad) * 0.12,
-            0.0,
-            1.0,
-        )
-        cloud_peak = np.power(cloud_detail, 0.88)
-        illuminated_relief = np.clip(optical_relief, 0.0, 0.11) / 0.11
-        night_srgb = np.clip(
-            0.096
-            + cloud_peak * 0.176
-            + body * cloud_peak * 0.012
-            + top * cloud_peak * 0.016
-            + illuminated_relief * 0.020,
-            0.086,
-            0.278,
-        )
-        night_tone = np.array([0.88, 0.89, 0.91], dtype=np.float32)
-    else:
-        night_srgb = np.clip(0.028 + reflectance * 0.085, 0.025, 0.115)
-        night_tone = np.array([0.82, 0.87, 0.94], dtype=np.float32)
+    night_srgb = np.clip(0.028 + reflectance * 0.085, 0.025, 0.115)
+    night_tone = np.array([0.82, 0.87, 0.94], dtype=np.float32)
     night_radiance = _linear(night_srgb[..., None] * night_tone)
     radiance = night_radiance * (1.0 - daylight[..., None]) + day_radiance * daylight[..., None]
-
-    if apple_night:
-        cloud_detail = np.clip(observed, 0.0, 1.0)
-        textured_density = np.power(cloud_detail, 1.42)
-        veil_opacity = smoothstep(0.05, 0.82, alpha) * (
-            0.012 + textured_density * 0.300 + illuminated_relief * 0.060
-        )
-        core_opacity = (
-            smoothstep(0.54, 0.90, alpha)
-            * smoothstep(0.52, 0.92, cloud_detail)
-            * 0.125
-        )
-        night_opacity = veil_opacity + core_opacity
-        density = smoothstep(0.055, 0.88, alpha)
-        day_opacity = density * (0.28 + reflectance * 0.56)
-        opacity = night_opacity * (1.0 - daylight) + day_opacity * daylight
-    else:
-        density = smoothstep(0.055, 0.88, alpha)
-        texture_weight = 0.28 + reflectance * 0.56
-        opacity = density * texture_weight
-        opacity *= 0.88 + daylight * 0.12
-    opacity = np.clip(
-        _blur_scalar(opacity, 2.0 if apple_night else 0.48),
-        0.0,
-        0.82,
-    )
+    density = smoothstep(0.055, 0.88, alpha)
+    opacity = density * (0.28 + reflectance * 0.56) * (0.88 + daylight * 0.12)
+    opacity = np.clip(_blur_scalar(opacity, 0.48), 0.0, 0.82)
     return CloudProperties(opacity.astype(np.float32), radiance.astype(np.float32))
 
 
@@ -495,66 +490,75 @@ def _cloud_layer(
     exposed = np.clip(cast - cloud_alpha * 0.46, 0.0, 1.0)
     daylight = smoothstep(-0.04, 0.40, solar_cos)
     shadow = smoothstep(0.04, 0.70, exposed) * daylight * 0.145
+    if apple_night:
+        shadow *= cloud_alpha > 0
     surface = surface * (1.0 - shadow[..., None])
 
-    material = cloud_material(cloud_alpha, observed, solar_cos, apple_night=apple_night)
+    detail_scale = float(np.clip(preset.globe_radius_px / V2_LOCK.globe_radius_px, 0.5, 2.5))
+    material = cloud_material(
+        cloud_alpha, observed, solar_cos, apple_night=apple_night,
+        detail_scale=detail_scale,
+    )
     cloud_radiance = material.radiance
     cloud_opacity = material.opacity
     if apple_night:
-        # Night clouds receive weak skylight and should sit just above the
-        # local ground value. This removes dark cut-out shapes while keeping
-        # their real IR-derived structure and optical depth.
-        local_surface = _blur_rgb(surface, 2.4)
-        cloud_volume = np.power(smoothstep(0.08, 0.88, observed), 0.86)
-        minimum_night_cloud = local_surface * (
-            1.045 + cloud_volume[..., None] * 0.39
-        ) + (
-            0.22 + cloud_volume[..., None] * 0.78
-        ) * np.array([0.0038, 0.0044, 0.0053], dtype=np.float32)
         cloud_night = 1.0 - daylight
-        lifted_night = np.maximum(material.radiance, minimum_night_cloud)
         limb = np.power(np.clip(1.0 - view_cos, 0.0, 1.0), 1.65)
         edge_fade = smoothstep(0.020, 0.145, view_cos)
         density = smoothstep(0.07, 0.82, cloud_alpha)
-        limb_opacity = _blur_scalar(material.opacity, 3.8)
+        limb_opacity = _blur_scalar(material.opacity, 1.6)
         spherical_opacity = (
-            material.opacity * (1.0 - limb * 0.62)
-            + limb_opacity * limb * 0.62
+            material.opacity * (1.0 - limb * 0.45)
+            + limb_opacity * limb * 0.45
         )
         # Longer optical paths near the limb make the layer read as a shell,
         # while the final few pixels fade into the atmospheric rim instead of
         # forming a flat strip across the top of the globe.
         cloud_opacity = np.clip(
-            spherical_opacity * (1.0 + limb * 0.52) * edge_fade,
+            spherical_opacity * (1.0 + limb * 0.18) * edge_fade,
             0.0,
-            0.68,
+            0.975,
         )
+        cloud_opacity *= cloud_alpha > 0
         limb_skylight = (
             limb * density * cloud_night
         )[..., None] * np.array([0.0028, 0.0040, 0.0056], dtype=np.float32)
-        cloud_radiance = (
-            material.radiance * daylight[..., None]
-            + lifted_night * cloud_night[..., None]
-        ) + limb_skylight
+        cloud_radiance = material.radiance * _cloud_volume_shading(
+            observed, daylight, view_cos, sun_x, sun_y, detail_scale,
+        )[..., None] + limb_skylight
     composite = (
         surface * (1.0 - cloud_opacity[..., None])
         + cloud_radiance * cloud_opacity[..., None]
     )
-    if apple_night:
-        # A very low-energy silver lining restores the observed fine structure
-        # without turning the full IR footprint into a flat grey veil.
-        local = _blur_scalar(observed, 2.2)
-        fine_relief = np.clip(observed - local * 0.72, 0.0, 1.0)
-        cloud_night = 1.0 - daylight
-        detail = (
-            fine_relief
-            * smoothstep(0.05, 0.78, cloud_alpha)
-            * cloud_night
-        )
-        composite += detail[..., None] * np.array(
-            [0.0038, 0.0042, 0.0048], dtype=np.float32
-        )
     return composite
+
+
+def _cloud_volume_shading(
+    observed: np.ndarray,
+    daylight: np.ndarray,
+    view_cos: np.ndarray,
+    sun_x: float,
+    sun_y: float,
+    detail_scale: float,
+) -> np.ndarray:
+    """Display relief from observed structure, not invented 3-D cloud heights.
+
+    Daylight adds restrained sun-facing slope shading. At night only local
+    structure/sky occlusion remains: no fictitious sunlight or city reflection.
+    Nothing here warps the map or creates noise/density outside its footprint.
+    """
+    fine = _blur_scalar(observed, 0.8 * detail_scale)
+    middle = _blur_scalar(observed, 3.2 * detail_scale)
+    broad = _blur_scalar(observed, 12.0 * detail_scale)
+    crests = np.clip((fine - middle) * 1.7 + (middle - broad) * 1.4, -0.18, 0.24)
+    sky_occlusion = np.clip((broad - middle) * 1.4, 0.0, 0.16)
+    gy, gx = np.gradient(middle)
+    sun_slope = np.clip(-(gx * sun_x + gy * sun_y) * (8.0 * detail_scale), -0.22, 0.22)
+    relief = crests * (1.25 - daylight * 0.35) - sky_occlusion
+    relief += sun_slope * daylight
+    # Gradually flatten micro-relief at grazing angles to avoid embossed rims.
+    relief *= smoothstep(0.025, 0.35, view_cos)
+    return np.clip(1.0 + relief, 0.65, 1.38).astype(np.float32)
 
 
 def atmosphere_scattering(
@@ -571,12 +575,12 @@ def atmosphere_scattering(
         sunward = 0.055 + 0.945 * smoothstep(-0.48, 0.42, solar)
     else:
         sunward = 0.40 + 0.60 * smoothstep(-0.45, 0.65, solar)
-    limb = np.power(np.clip(1.0 - view_cos, 0.0, 1.0), 2.65)
+    limb = np.power(np.clip(1.0 - view_cos, 0.0, 1.0), 3.7)
     rim = limb * visible * sunward
 
     mask_image = Image.fromarray(np.uint8(visible * 255), "L")
-    near_radius = size[0] * (0.0115 if apple_night else 0.0062)
-    far_radius = size[0] * (0.032 if apple_night else 0.017)
+    near_radius = size[0] * (0.0075 if apple_night else 0.0062)
+    far_radius = size[0] * (0.024 if apple_night else 0.017)
     near = np.asarray(
         mask_image.filter(ImageFilter.GaussianBlur(max(5, near_radius))), dtype=np.float32
     ) / 255.0
@@ -623,9 +627,9 @@ def _apple_night_midtone_grade(earth: np.ndarray, night: np.ndarray) -> np.ndarr
     toe = smoothstep(0.0018, 0.011, luminance)
     highlight_rolloff = 1.0 - smoothstep(0.060, 0.27, luminance)
     lift = night * toe * highlight_rolloff
-    return earth + lift[..., None] * np.array(
-        [0.0040, 0.0045, 0.0048], dtype=np.float32
-    )
+    # Multiplicative toe lift preserves blue water and warm land; adding the
+    # same grey floor everywhere destroyed colour and cloud contrast at night.
+    return earth * (1.0 + lift[..., None] * 0.42)
 
 
 def _soften_surface_limb(surface: np.ndarray, view_cos: np.ndarray) -> np.ndarray:
@@ -644,7 +648,7 @@ def _soften_surface_limb(surface: np.ndarray, view_cos: np.ndarray) -> np.ndarra
     return compressed * (1.0 - blend[..., None]) + smoothed * blend[..., None]
 
 
-def render_preview_one(
+def _render_region(
     observation: Observation,
     preset: V2Preset,
     destination: Path,
@@ -653,7 +657,9 @@ def render_preview_one(
     background_asset: Path | None = Path("assets/space-background.jpg"),
     output_size: tuple[int, int] | None = None,
     apple_night: bool = False,
-) -> None:
+    background_srgb: np.ndarray | None = None,
+    atmosphere_size: tuple[int, int] | None = None,
+) -> Image.Image:
     lat, lon, visible, view_cos, vectors, view = perspective_camera_grid(preset)
     # Clouds and terrain must share the exact same geographic projection.
     # Apparent altitude belongs in shading/edge softness, not a larger sphere:
@@ -661,28 +667,21 @@ def render_preview_one(
     # Lock composition.
     cloud_preset = preset
     cloud_lat, cloud_lon, cloud_visible, cloud_vectors = lat, lon, visible, vectors
-    base_map = _load(observation.base)
-    base = sample_equirectangular(base_map, lat, lon)
-    cloud_base = (
-        sample_equirectangular(base_map, cloud_lat, cloud_lon)
-        if apple_night
-        else base
-    )
-    del base_map
-    lights_map = _load(observation.lights)
-    lights = sample_equirectangular(lights_map, lat, lon)
-    del lights_map
+    base = _sample_map(observation.base, lat, lon)
+    cloud_base = base
     if observation.terrain:
-        relief_map = _load(observation.terrain)
-        relief = sample_equirectangular(relief_map, lat, lon)
-        del relief_map
+        relief = _sample_map(observation.terrain, lat, lon)
     else:
         relief = None
 
-    albedo, ocean, land = _material_albedo(base)
+    water = (_sample_map(observation.water_mask, lat, lon)[..., 3]
+             if observation.water_mask else None)
+    albedo, ocean, land = _material_albedo(base, water)
     normal = _relief_normals(vectors, relief, land, preset)
     sun = sun_vector(lighting_time).astype(np.float32)
     cloud_solar_cos = np.sum(cloud_vectors * sun, axis=-1).astype(np.float32)
+    observation_sun = sun_vector(observation.timestamp).astype(np.float32)
+    source_day = np.clip(np.sum(cloud_vectors * observation_sun, axis=-1), 0, 1)
     earth, solar_cos = _surface_radiance(
         albedo,
         ocean,
@@ -692,38 +691,41 @@ def render_preview_one(
         sun,
         apple_night=apple_night,
     )
+    del albedo, ocean, land, normal, relief, water, view
     if apple_night:
         earth = _soften_surface_limb(earth, view_cos)
 
     if observation.geocolor is None:
-        visible_map = _load(observation.visible)
-        cloud_visible_image = sample_equirectangular(visible_map, cloud_lat, cloud_lon)
-        del visible_map
-        infrared_map = _load(observation.infrared)
-        cloud_infrared = sample_equirectangular(infrared_map, cloud_lat, cloud_lon)
-        del infrared_map
+        cloud_visible_image = _sample_map(observation.visible, cloud_lat, cloud_lon)
+        cloud_infrared = _sample_map(observation.infrared, cloud_lat, cloud_lon)
         cloud_alpha = _cloud_alpha(
             cloud_visible_image,
             cloud_infrared,
             cloud_base,
-            np.clip(cloud_solar_cos, 0.0, 1.0),
+            source_day,
         )
         apple_thermal_texture = None
         if apple_night:
             night_alpha, apple_thermal_texture = _apple_night_ir_cloud(
                 cloud_infrared,
                 cloud_base,
+                thermal=(
+                    sample_coldness(observation.infrared, cloud_lat, cloud_lon)
+                    if observation.source.startswith("NASA GIBS") else None
+                ),
             )
             night_weight = 1.0 - smoothstep(
                 0.02,
                 0.30,
-                np.clip(cloud_solar_cos, 0.0, 1.0),
+                source_day,
             )
             cloud_alpha = (
                 cloud_alpha * (1.0 - night_weight)
                 + night_alpha * night_weight
             )
-        cloud_alpha *= cloud_visible
+        coverage = cloud_infrared[..., 3]
+        coverage *= smoothstep(0.65, 0.995, _blur_scalar(coverage, 4.0))
+        cloud_alpha *= cloud_visible * coverage
         visible_luminance = np.sum(
             cloud_visible_image[..., :3]
             * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
@@ -744,13 +746,18 @@ def render_preview_one(
             if apple_thermal_texture is not None
             else _thermal_cloud_texture(cloud_infrared)
         )
-        day_texture_mix = smoothstep(0.02, 0.30, np.clip(cloud_solar_cos, 0.0, 1.0))
+        day_texture_mix = smoothstep(0.02, 0.30, source_day)
         cloud_texture = np.clip(
             daytime_texture * day_texture_mix
             + thermal_texture * (1.0 - day_texture_mix),
             0.0,
             1.0,
         )
+        del cloud_visible_image, cloud_infrared, coverage, visible_luminance
+        del daytime_texture, daytime_fine, daytime_broad, thermal_texture, day_texture_mix
+        del apple_thermal_texture
+        if apple_night:
+            del night_alpha, night_weight
     else:
         geocolor = _load(observation.geocolor)
         satellite, valid = sample_geostationary_focus_plate(
@@ -760,26 +767,24 @@ def render_preview_one(
         cloud_alpha = np.maximum(_day_cloud_alpha(satellite, day), _night_cloud_alpha(satellite, day))
         cloud_alpha *= valid * cloud_visible
         cloud_texture = np.clip(satellite[..., :3].mean(axis=-1), 0.0, 1.0)
+        del geocolor, satellite, valid, day
 
+    del base, cloud_base, source_day
+    lights = _sample_map(observation.lights, lat, lon)
     night = 1.0 - smoothstep(-0.08, 0.14, solar_cos)
-    raw_light_signal = np.clip(_city_light_signal(lights), 0.0, 1.0)
     if apple_night:
-        crisp_lights = np.power(raw_light_signal, 1.38 if preset.name == "lock" else 1.48)
-        local_lights = _blur_scalar(crisp_lights, 1.7 if preset.name == "lock" else 1.3)
-        broad_lights = _blur_scalar(crisp_lights, 4.5 if preset.name == "lock" else 3.7)
-        light_signal = crisp_lights * 0.67 + local_lights * 0.25 + broad_lights * 0.08
-        light_signal *= 1.0 - np.clip(light_signal, 0.0, 1.0) * 0.25
-        light_signal *= np.clip(1.0 - cloud_alpha * 0.70, 0.24, 1.0)
-        light_strength = 0.40 if preset.name == "lock" else 0.36
-        light_tone = np.array([1.36, 0.56, 0.14], dtype=np.float32)
+        # Preserve the observed white-hot cores and warm outskirts instead of
+        # replacing all VIIRS pixels with one flat gold colour.
+        light_rgb = np.clip(lights[..., :3], 0, 1)
+        emission_gate = 1.0 - smoothstep(0.012, 0.08, light_rgb[..., 2] - light_rgb[..., 0])
+        emission = _linear(np.clip((light_rgb - 0.028) / 0.972, 0, 1))
+        earth += emission * (night * emission_gate * 0.85)[..., None] * np.array([1.10, 0.82, 0.42], dtype=np.float32)
+        del light_rgb, emission_gate, emission
     else:
-        light_exponent = 1.32
-        light_strength = 1.72
-        light_tone = np.array([2.35, 0.88, 0.20], dtype=np.float32)
-        light_signal = np.power(raw_light_signal, light_exponent)
-    earth += (
-        light_signal * night * light_strength
-    )[..., None] * light_tone
+        light_signal = np.power(np.clip(_city_light_signal(lights), 0, 1), 1.32)
+        earth += (light_signal * night * 1.72)[..., None] * np.array([2.35, 0.88, 0.20], dtype=np.float32)
+        del light_signal
+    del lights
     earth = _cloud_layer(
         earth,
         cloud_alpha,
@@ -805,7 +810,7 @@ def render_preview_one(
         view_cos,
         vectors,
         sun,
-        preset.size,
+        atmosphere_size or preset.size,
         apple_night=apple_night,
     )
     atmosphere_color = np.array([0.20, 0.67, 1.16], dtype=np.float32)
@@ -817,9 +822,9 @@ def render_preview_one(
             + daylight_atmosphere[..., None]
             * (atmosphere_color - night_atmosphere_color)
         )
-        rim_strength = 0.225 + daylight_atmosphere * 0.035
+        rim_strength = 0.14 + daylight_atmosphere * 0.025
         night_fraction = float(night[visible].mean())
-        halo_strength = 0.215 - night_fraction * 0.015
+        halo_strength = 0.16 - night_fraction * 0.015
         halo_color = (
             night_atmosphere_color * night_fraction
             + atmosphere_color * (1.0 - night_fraction)
@@ -832,7 +837,8 @@ def render_preview_one(
     earth += rim[..., None] * atmosphere_tone * np.asarray(rim_strength)[..., None]
     edge_alpha = _edge_alpha(preset)
 
-    background_srgb = space_background(preset.size, asset=background_asset)
+    if background_srgb is None:
+        background_srgb = space_background(preset.size, asset=background_asset)
     output = _linear(background_srgb)
     output += halo[..., None] * halo_color * halo_strength
     # Perspective rays outside ``visible`` do not intersect the globe.  Never
@@ -844,7 +850,11 @@ def render_preview_one(
         output * (1.0 - edge_alpha[..., None])
         + composite_earth * edge_alpha[..., None]
     )
-    output = _soft_bloom(output)
+    output = _finish_display(_soft_bloom(output))
+    return Image.fromarray(np.uint8(output * 255), "RGB")
+
+
+def _finish_display(output: np.ndarray) -> np.ndarray:
     output = aces_tonemap(output * 1.16)
 
     luminance = np.sum(
@@ -857,12 +867,44 @@ def render_preview_one(
         + shadows * np.array([-0.010, 0.002, 0.018], dtype=np.float32)
         + highlights * np.array([0.018, 0.006, -0.016], dtype=np.float32)
     )
-    output = _display(np.clip(output, 0.0, 1.0))
+    return _display(np.clip(output, 0.0, 1.0))
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    image = Image.fromarray(np.uint8(output * 255), "RGB")
+
+def render_preview_one(
+    observation: Observation,
+    preset: V2Preset,
+    destination: Path,
+    *,
+    lighting_time: datetime,
+    background_asset: Path | None = Path("assets/space-background.jpg"),
+    output_size: tuple[int, int] | None = None,
+    apple_night: bool = False,
+) -> None:
+    # Calculate material only around the sphere. Empty lock-screen space must
+    # not allocate 8K source samples, cloud arrays and surface normals. Padding
+    # includes four halo blur radii, so the final silhouette is unchanged.
+    width, height = preset.size
+    cx, cy = preset.center_px
+    margin = int(max(12, width * .032) * 4 + 16)
+    radius = preset.globe_radius_px
+    left = max(0, int(cx - radius - margin))
+    top = max(0, int(cy - radius - margin))
+    right = min(width, int(np.ceil(cx + radius + margin)))
+    bottom = min(height, int(np.ceil(cy + radius + margin)))
+    region = replace(preset, size=(right - left, bottom - top), center_px=(cx - left, cy - top))
+    raw_background = space_background(preset.size, asset=background_asset)
+    background_crop = raw_background[top:bottom, left:right].copy()
+    image = Image.fromarray(np.uint8(_finish_display(_linear(raw_background)) * 255), "RGB")
+    del raw_background
+    rendered = _render_region(
+        observation, region, destination, lighting_time=lighting_time,
+        apple_night=apple_night, background_srgb=background_crop,
+        atmosphere_size=preset.size,
+    )
+    image.paste(rendered, (left, top))
     if output_size is not None and image.size != output_size:
         image = image.resize(output_size, Image.Resampling.LANCZOS)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     image.save(destination, quality=97, subsampling=0)
 
 
@@ -930,7 +972,8 @@ def _production_manifest(
     manifest = {
         "profile": profile,
         "renderer": "cinematic-earth-v2",
-        "style": "apple-night-v24",
+        "style": "reference-atmosphere-v25",
+        "cloud_material": "observed-volume-r2",
         "preview_only": False,
         "observation_utc": observation.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "lighting_utc": lighting_time.astimezone(UTC).isoformat().replace("+00:00", "Z"),
@@ -973,7 +1016,7 @@ def render_production_pair(
     artifacts: dict[str, dict] = {}
     for preset in presets_for_location(target_latitude, target_longitude):
         path = output / f"{preset.name}.jpg"
-        working_scale = 0.68
+        working_scale = 1.0
         working = replace(
             preset,
             size=(round(preset.size[0] * working_scale), round(preset.size[1] * working_scale)),

@@ -19,3 +19,6 @@ earthwall-preview-v2 = "earthwall.preview_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+earthwall = ["data/*.xml"]

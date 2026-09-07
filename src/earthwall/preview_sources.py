@@ -69,19 +69,22 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
     base = _download(BASE_LAYER, None, v2_cache / "blue-marble-8k.png")
     lights = _download(LIGHTS_LAYER, None, v2_cache / "city-lights-8k.png")
     terrain = _download(TERRAIN_LAYER, None, v2_cache / "terrain-relief-8k.png")
+    water_mask = _download("MODIS_Water_Mask", None, v2_cache / "water-mask-8k.png")
+    observation = replace(observation, water_mask=water_mask)
     if observation.geocolor is not None or observation.source.startswith("EUMETSAT"):
         return replace(observation, base=base, lights=lights, terrain=terrain)
 
     stamp = observation.timestamp.astimezone(UTC).strftime("%Y%m%dT%H%MZ")
+    prefix = observation.visible.name.split(stamp)[0].rstrip("-")
     visible = _download(
-        VISIBLE_LAYER,
+        observation.visible_layer,
         observation.timestamp,
-        v2_cache / f"himawari-{stamp}-visible-8k.png",
+        v2_cache / f"{prefix}-{stamp}-visible-8k.png",
     )
     infrared = _download(
-        IR_LAYER,
+        observation.infrared_layer,
         observation.timestamp,
-        v2_cache / f"himawari-{stamp}-infrared-8k.png",
+        v2_cache / f"{prefix}-{stamp}-infrared-8k.png",
     )
     return replace(
         observation,

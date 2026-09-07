@@ -4,6 +4,8 @@ import argparse
 import hmac
 import json
 import logging
+import math
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,6 +24,49 @@ class LocationApplication:
         self.store = store
         self.publisher = publisher
         self.token = token
+        self._guard = threading.Lock()
+        self._worker: threading.Thread | None = None
+        self._pending: Location | None = None
+        self._error: str | None = None
+
+    def _queue(self, location: Location) -> None:
+        with self._guard:
+            self._pending = location
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._render_pending, daemon=True)
+                self._worker.start()
+
+    def _render_pending(self) -> None:
+        while True:
+            with self._guard:
+                location, self._pending = self._pending, None
+                if location is None:
+                    self._worker = None
+                    return
+            try:
+                self.publisher.publish(location)
+                self._error = None
+            except Exception:
+                LOGGER.exception("location render failed; keeping last good wallpaper")
+                self._error = "render failed; last good wallpaper retained"
+
+    def status(self, authorization: str) -> tuple[int, dict]:
+        if not hmac.compare_digest(authorization, f"Bearer {self.token}"):
+            return HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"}
+        response = {"rendering": self._worker is not None, "error": self._error}
+        try:
+            current = (self.publisher.root / "current").resolve(strict=True)
+            manifest = json.loads((current / "manifest.json").read_text())
+            response.update({
+                "target": manifest["target"],
+                "observation_utc": manifest["observation_utc"],
+                "version": current.name,
+                "lock_path": f"/earthwall/releases/{current.name}/lock.jpg",
+                "home_path": f"/earthwall/releases/{current.name}/home.jpg",
+            })
+        except (AttributeError, FileNotFoundError, KeyError, ValueError):
+            response["version"] = None
+        return HTTPStatus.OK, response
 
     def update(self, authorization: str, payload: dict) -> tuple[int, dict]:
         expected = f"Bearer {self.token}"
@@ -29,18 +74,18 @@ class LocationApplication:
             return HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"}
         try:
             accuracy = float(payload.get("accuracy", 0.0))
-            if accuracy < 0 or accuracy > 20_000:
+            if not math.isfinite(accuracy) or accuracy < 0 or accuracy > 20_000:
                 raise ValueError("location accuracy is outside the accepted range")
             candidate = Location(
                 float(payload["latitude"]),
                 float(payload["longitude"]),
                 str(payload.get("name") or "Current location").strip(),
             )
-            location, distance, changed = self.store.update(candidate)
-            manifest = None
-            if changed:
-                manifest = self.publisher.publish(location)
-            return HTTPStatus.OK, {
+            with self._guard:
+                location, distance, changed = self.store.update(candidate)
+            if changed or self._error is not None:
+                self._queue(location)
+            return (HTTPStatus.ACCEPTED if changed else HTTPStatus.OK), {
                 "changed": changed,
                 "distance_km": round(distance, 1),
                 "threshold_km": self.store.threshold_km,
@@ -49,11 +94,8 @@ class LocationApplication:
                     "latitude": round(location.latitude, 4),
                     "longitude": round(location.longitude, 4),
                 },
-                "version": (
-                    manifest["artifacts"]["home"]["sha256"][:16]
-                    if manifest is not None
-                    else "current"
-                ),
+                "rendering": self._worker is not None,
+                "version": "pending" if changed else "current",
             }
         except (KeyError, TypeError, ValueError) as error:
             return HTTPStatus.BAD_REQUEST, {"error": str(error)}
@@ -64,6 +106,10 @@ def handler_for(application: LocationApplication):
         server_version = "EarthwallLocation/1"
 
         def do_GET(self):
+            if self.path == "/status":
+                status, response = application.status(self.headers.get("Authorization", ""))
+                self._json(status, response)
+                return
             if self.path != "/health":
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return

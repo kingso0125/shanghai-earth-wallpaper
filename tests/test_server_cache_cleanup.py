@@ -10,6 +10,24 @@ from scripts.cleanup_server_cache import cleanup
 
 
 class ServerCacheCleanupTests(unittest.TestCase):
+    def test_nested_8k_cloud_cache_is_pruned_but_static_maps_remain(self) -> None:
+        now = datetime.now().astimezone()
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "cinematic-v2"
+            nested.mkdir()
+            old = nested / "goes-east-20260806T0000Z-visible-8k.png"
+            latest = nested / "goes-east-20260907T0900Z-visible-8k.png"
+            static = nested / "water-mask-8k.png"
+            for path in (old, latest, static):
+                path.write_bytes(b"data")
+            os.utime(old, ((now - timedelta(days=2)).timestamp(),) * 2)
+            os.utime(static, ((now - timedelta(days=2)).timestamp(),) * 2)
+            cleanup(root, now=now)
+            self.assertFalse(old.exists())
+            self.assertTrue(latest.exists())
+            self.assertTrue(static.exists())
+
     def test_deletes_previous_day_but_preserves_latest_fallback(self) -> None:
         timezone = datetime.now().astimezone().tzinfo
         now = datetime(2026, 8, 8, 1, 35, tzinfo=timezone)

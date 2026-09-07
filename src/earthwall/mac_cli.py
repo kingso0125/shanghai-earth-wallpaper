@@ -9,12 +9,14 @@ from .config import SHANGHAI, resolve_target
 from .preview_sources import upgrade_v2_observation
 from .preview_v2 import render_production_mac_pair
 from .sources import Observation, _newest_cached_pair, acquire_for_target
+from .location import Location
+from .target import follow_server
 
 
 def acquire_mac(cache: Path, longitude: float = SHANGHAI[1]) -> Observation:
     """Prefer a newer server-validated raw pair without changing phone acquisition."""
     observation = acquire_for_target(cache, longitude)
-    if observation.source.startswith("EUMETSAT"):
+    if observation.source.startswith("EUMETSAT") or "GOES" in observation.source:
         return observation
     manifest_path = cache / "server-manifest.json"
     cached = _newest_cached_pair(cache)
@@ -55,10 +57,14 @@ def main(argv=None) -> int:
     parser.add_argument("--latitude", type=float, default=SHANGHAI[0])
     parser.add_argument("--longitude", type=float, default=SHANGHAI[1])
     parser.add_argument("--location-name", default="Shanghai")
+    parser.add_argument("--follow-server", action="store_true")
     args = parser.parse_args(argv)
     latitude, longitude, location_name = resolve_target(
         args.latitude, args.longitude, args.location_name
     )
+    if args.follow_server:
+        target = follow_server(args.cache, Location(latitude, longitude, location_name))
+        latitude, longitude, location_name = target.latitude, target.longitude, target.name
     observation = acquire_mac(args.cache, longitude)
     observation = upgrade_v2_observation(args.cache, observation)
     manifest = render_production_mac_pair(

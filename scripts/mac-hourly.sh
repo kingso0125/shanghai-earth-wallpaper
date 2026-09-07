@@ -59,4 +59,4 @@ APPLESCRIPT
 
 # Keep one day of versioned desktop images and two days of source cache.
 /usr/bin/find "$wallpapers" -type f -name 'mac-home-*.jpg' -mtime +1 -delete
-/usr/bin/find "$cache" -type f \( -name '*-visible.png' -o -name '*-infrared.png' \) -mtime +2 -delete
+"$python" "$repo/scripts/cleanup_server_cache.py" "$cache"

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .location import Location
 from .preview_v2 import render_production_pair
+from .preview_sources import upgrade_v2_observation
 from .qa import audit
 from .sources import acquire_for_target
 
@@ -35,6 +36,7 @@ class Publisher:
             staging.chmod(0o755)
             try:
                 observation = acquire_for_target(self.cache, location.longitude)
+                observation = upgrade_v2_observation(self.cache, observation)
                 manifest = render_production_pair(
                     observation,
                     staging,

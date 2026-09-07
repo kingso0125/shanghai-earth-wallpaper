@@ -408,16 +408,19 @@ def _feather_coverage(alpha: np.ndarray, radius: float = 96.0) -> np.ndarray:
 def _city_light_signal(lights: np.ndarray) -> np.ndarray:
     """Isolate measured VIIRS light emission from the blue night-map background."""
     rgb = lights[..., :3]
-    warm_radiance = np.clip(
-        (rgb[..., 0] + rgb[..., 1]) * 0.5 - rgb[..., 2] * 0.56, 0.0, 1.0
-    )
-    core = np.power(smoothstep(0.040, 0.70, warm_radiance), 1.22)
+    luminance = np.sum(rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1)
+    background = 1.0 - smoothstep(0.012, 0.08, rgb[..., 2] - rgb[..., 0])
+    # Keep the source's point-to-point radiance differences. A smoothstep
+    # clipped major metropolitan regions into flat, full-brightness blobs.
+    # White city cores must remain brighter than yellow halos. Subtracting
+    # blue from warm radiance inverted that order and flattened entire cities.
+    core = np.power(np.clip((luminance - 0.028) / 0.972, 0, 1), 2.0) * background
     glow_image = Image.fromarray(np.uint8(np.clip(core, 0.0, 1.0) * 255), "L")
     local = np.asarray(
         glow_image.filter(ImageFilter.GaussianBlur(1.15)), dtype=np.float32
     ) / 255.0
-    crisp_core = np.clip(core + (core - local) * 0.55, 0.0, 1.0)
-    return np.clip(crisp_core * 0.90 + local * 0.18, 0.0, 1.0)
+    crisp_core = np.clip(core + (core - local) * 0.18, 0.0, 1.0)
+    return np.clip(crisp_core * 0.97 + local * 0.03, 0.0, 1.0)
 
 
 def _blend_city_lights(

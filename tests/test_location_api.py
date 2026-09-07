@@ -26,6 +26,9 @@ class LocationApplicationTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        worker = self.application._worker
+        if worker is not None:
+            worker.join(timeout=5)
         self.temporary.cleanup()
 
     def test_rejects_missing_token(self):
@@ -44,7 +47,7 @@ class LocationApplicationTests(unittest.TestCase):
         self.assertFalse(response["changed"])
         self.assertEqual(self.publisher.locations, [])
 
-    def test_guangzhou_change_publishes_immediately(self):
+    def test_guangzhou_change_is_accepted_without_waiting_for_render(self):
         status, response = self.application.update(
             "Bearer test-token-with-at-least-24-characters",
             {
@@ -54,11 +57,18 @@ class LocationApplicationTests(unittest.TestCase):
                 "name": "Guangzhou",
             },
         )
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 202)
         self.assertTrue(response["changed"])
         self.assertEqual(response["target"]["name"], "Guangzhou")
+        worker = self.application._worker
+        if worker is not None:
+            worker.join(timeout=5)
         self.assertEqual(len(self.publisher.locations), 1)
-        self.assertEqual(response["version"], "a" * 16)
+        self.assertEqual(response["version"], "pending")
+
+    def test_status_requires_authentication(self):
+        status, _ = self.application.status("")
+        self.assertEqual(status, 401)
 
 
 if __name__ == "__main__":

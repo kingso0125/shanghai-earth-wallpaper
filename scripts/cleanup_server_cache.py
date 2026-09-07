@@ -8,19 +8,22 @@ from pathlib import Path
 
 
 PATTERNS = (
-    "himawari-*-visible.png",
-    "himawari-*-infrared.png",
     "cira-*-geocolor.png",
+) + tuple(
+    f"{satellite}-*-{band}{suffix}.png"
+    for satellite in ("himawari", "meteosat", "goes-east", "goes-west")
+    for band in ("visible", "infrared")
+    for suffix in ("", "-8k")
 )
 
 
 def cleanup(root: Path, *, now: datetime | None = None, dry_run: bool = False) -> dict:
     now = now or datetime.now().astimezone()
     today = now.astimezone().date()
-    candidates = {path for pattern in PATTERNS for path in root.glob(pattern)}
+    candidates = {path for pattern in PATTERNS for path in root.rglob(pattern)}
     keep: set[Path] = set()
     for pattern in PATTERNS:
-        matches = list(root.glob(pattern))
+        matches = list(root.rglob(pattern))
         if matches:
             keep.add(max(matches, key=lambda path: path.stat().st_mtime_ns))
 

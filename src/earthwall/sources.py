@@ -7,6 +7,7 @@ import re
 import ssl
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,6 +38,9 @@ class Observation:
     source: str = "CIRA SLIDER / KMA GK2A"
     satellite_longitude: float = 140.7
     terrain: Path | None = None
+    water_mask: Path | None = None
+    visible_layer: str = VISIBLE_LAYER
+    infrared_layer: str = IR_LAYER
 
 
 def _request(url: str, timeout: int = 90) -> bytes:
@@ -91,6 +95,23 @@ def latest_common_time(capabilities: str) -> datetime:
         _layer_default_time(capabilities, VISIBLE_LAYER),
         _layer_default_time(capabilities, IR_LAYER),
     )
+
+
+def latest_gibs_time(visible_layer: str = VISIBLE_LAYER, infrared_layer: str = IR_LAYER) -> datetime:
+    """WMTS publishes fresher timestamps than the separately cached WMS index."""
+    try:
+        root = ET.fromstring(_request("https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/1.0.0/WMTSCapabilities.xml"))
+        ns = {"w": "http://www.opengis.net/wmts/1.0", "o": "http://www.opengis.net/ows/1.1"}
+        times = {}
+        for layer in root.findall(".//w:Layer", ns):
+            name = layer.findtext("o:Identifier", namespaces=ns)
+            if name in (visible_layer, infrared_layer):
+                value = layer.findtext("w:Dimension/w:Default", namespaces=ns)
+                times[name] = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return min(times[visible_layer], times[infrared_layer])
+    except (KeyError, ValueError, AttributeError, ET.ParseError, OSError):
+        capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
+        return min(_layer_default_time(capabilities, visible_layer), _layer_default_time(capabilities, infrared_layer))
 
 
 def _valid_image(path: Path, expected_size=(4096, 2048)) -> bool:
@@ -149,8 +170,7 @@ def _acquire_gibs_layers(
     lights: Path,
     terrain: Path | None,
 ) -> Observation:
-    capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
-    timestamp = latest_common_time(capabilities)
+    timestamp = latest_gibs_time()
     cached = _newest_cached_pair(cache)
     now = datetime.now(UTC)
     if (
@@ -316,25 +336,45 @@ def _acquire_cira_geocolor(cache: Path, satellite: str) -> tuple[datetime, Path]
 
 def acquire_for_target(cache: Path, longitude: float) -> Observation:
     """Select a live geostationary cloud source that covers the target."""
-    base_observation = acquire(cache)
-    if not -15.0 <= longitude <= 5.0:
-        return base_observation
-    timestamp, visible, infrared = _acquire_eumetsat_layers(cache)
+    if not -180 <= longitude <= 180:
+        raise ValueError("longitude must be between -180 and 180")
+    if longitude > 65:
+        return acquire(cache)
+    base, lights, terrain = _acquire_static(cache)
+    if longitude >= -35:
+        timestamp, visible, infrared = _acquire_eumetsat_layers(cache)
+        return Observation(timestamp, visible, infrared, None, base, lights, "fresh",
+                           "EUMETSAT Meteosat Third Generation FCI", 0.0, terrain)
+    region = "West" if longitude < -120 else "East"
+    visible_layer = f"GOES-{region}_ABI_Band2_Red_Visible_1km"
+    infrared_layer = f"GOES-{region}_ABI_Band13_Clean_Infrared"
+    timestamp = latest_gibs_time(visible_layer, infrared_layer)
+    age = (datetime.now(UTC) - timestamp).total_seconds()
+    if not 0 <= age <= 3 * 3600:
+        raise ValueError("no recent GOES observation; keep the last good wallpaper")
+    stamp = timestamp.strftime("%Y%m%dT%H%MZ")
+    visible = cache / f"goes-{region.lower()}-{stamp}-visible.png"
+    infrared = cache / f"goes-{region.lower()}-{stamp}-infrared.png"
+    for layer, path in ((visible_layer, visible), (infrared_layer, infrared)):
+        if not _valid_image(path):
+            _atomic_download(_wms_url(layer, timestamp=timestamp, image_format="image/png"), path)
     return Observation(
         timestamp=timestamp,
         visible=visible,
         infrared=infrared,
         geocolor=None,
-        base=base_observation.base,
-        lights=base_observation.lights,
+        base=base,
+        lights=lights,
         status="fresh",
-        source="EUMETSAT Meteosat Third Generation FCI",
-        satellite_longitude=0.0,
-        terrain=base_observation.terrain,
+        source=f"NASA GIBS / NOAA GOES-{region}",
+        satellite_longitude=-137.2 if region == "West" else -75.2,
+        terrain=terrain,
+        visible_layer=visible_layer,
+        infrared_layer=infrared_layer,
     )
 
 
-def acquire(cache: Path) -> Observation:
+def _acquire_static(cache: Path) -> tuple[Path, Path, Path | None]:
     cache.mkdir(parents=True, exist_ok=True)
     # Keep static surface layers lossless. JPEG block artifacts become obvious
     # in the Home close-up and make terrain/lights look like a painted texture.
@@ -353,6 +393,11 @@ def acquire(cache: Path) -> Observation:
             )
         except Exception:
             terrain = None
+    return base, lights, terrain
+
+
+def acquire(cache: Path) -> Observation:
+    base, lights, terrain = _acquire_static(cache)
 
     # Separate JMA visible/IR layers are the primary source. They let the
     # renderer put city emission below live cloud and avoid GeoColor's synthetic
