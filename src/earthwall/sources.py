@@ -125,12 +125,35 @@ def _valid_image(path: Path, expected_size=(4096, 2048)) -> bool:
         return False
 
 
+def _valid_cloud_image(path: Path, expected_size=(4096, 2048)) -> bool:
+    """A correctly sized PNG may still be a completely empty WMS response."""
+    if not _valid_image(path, expected_size):
+        return False
+    with Image.open(path) as image:
+        alpha = image.convert("RGBA").getchannel("A").resize((256, 128))
+        histogram = alpha.histogram()
+    return sum(histogram[16:]) / sum(histogram) > 0.15
+
+
+def _gibs_pair(cache: Path, timestamp: datetime) -> tuple[Path, Path]:
+    stamp = timestamp.strftime("%Y%m%dT%H%MZ")
+    visible = cache / f"himawari-{stamp}-visible.png"
+    infrared = cache / f"himawari-{stamp}-infrared.png"
+    for layer, path in ((VISIBLE_LAYER, visible), (IR_LAYER, infrared)):
+        if not _valid_cloud_image(path):
+            _atomic_download(_wms_url(layer, timestamp=timestamp, image_format="image/png"), path)
+        if not _valid_cloud_image(path):
+            path.unlink(missing_ok=True)
+            raise ValueError(f"empty satellite coverage: {layer} at {stamp}")
+    return visible, infrared
+
+
 def _newest_cached_pair(cache: Path) -> tuple[datetime, Path, Path] | None:
     pairs = []
     for visible in cache.glob("himawari-*-visible.png"):
         stamp = visible.name.removeprefix("himawari-").removesuffix("-visible.png")
         infrared = cache / f"himawari-{stamp}-infrared.png"
-        if _valid_image(visible) and _valid_image(infrared):
+        if _valid_cloud_image(visible) and _valid_cloud_image(infrared):
             try:
                 timestamp = datetime.strptime(stamp, "%Y%m%dT%H%MZ").replace(tzinfo=UTC)
             except ValueError:
@@ -191,19 +214,15 @@ def _acquire_gibs_layers(
             140.7,
             terrain,
         )
-    stamp = timestamp.strftime("%Y%m%dT%H%MZ")
-    visible = cache / f"himawari-{stamp}-visible.png"
-    infrared = cache / f"himawari-{stamp}-infrared.png"
-    if not _valid_image(visible):
-        _atomic_download(
-            _wms_url(VISIBLE_LAYER, timestamp=timestamp, image_format="image/png"),
-            visible,
-        )
-    if not _valid_image(infrared):
-        _atomic_download(
-            _wms_url(IR_LAYER, timestamp=timestamp, image_format="image/png"),
-            infrared,
-        )
+    try:
+        visible, infrared = _gibs_pair(cache, timestamp)
+    except (OSError, ValueError):
+        # WMTS metadata can announce a frame before WMS has its pixels. Use
+        # WMS's own latest common frame, and validate it too. Never publish a
+        # transparent IR placeholder as a real, cloud-free observation.
+        capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
+        timestamp = latest_common_time(capabilities)
+        visible, infrared = _gibs_pair(cache, timestamp)
     return Observation(
         timestamp,
         visible,
@@ -447,7 +466,7 @@ def acquire(cache: Path) -> Observation:
     if cached is not None:
         timestamp, visible, infrared = cached
         return Observation(
-            timestamp, visible, infrared, None, base, lights, "cached",
+            timestamp, visible, infrared, None, base, lights, "cached", "NASA GIBS / JMA Himawari-9 (cached)",
             terrain=terrain,
         )
     geocolor_cached = _newest_cached_geocolor(cache)

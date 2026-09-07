@@ -15,7 +15,7 @@ from .config import (
     TERRAIN_LAYER,
     VISIBLE_LAYER,
 )
-from .sources import Observation, _request
+from .sources import Observation, _request, _valid_cloud_image
 
 
 PREVIEW_SIZE = (8192, 4096)
@@ -48,8 +48,8 @@ def _valid(path: Path) -> bool:
         return False
 
 
-def _download(layer: str, timestamp: datetime | None, destination: Path) -> Path:
-    if _valid(destination):
+def _download(layer: str, timestamp: datetime | None, destination: Path, *, cloud: bool = False) -> Path:
+    if _valid(destination) and (not cloud or _valid_cloud_image(destination, PREVIEW_SIZE)):
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
@@ -59,6 +59,9 @@ def _download(layer: str, timestamp: datetime | None, destination: Path) -> Path
     with Image.open(temporary) as image:
         if image.size != PREVIEW_SIZE:
             raise ValueError(f"unexpected preview asset size {image.size}")
+    if cloud and not _valid_cloud_image(temporary, PREVIEW_SIZE):
+        temporary.unlink(missing_ok=True)
+        raise ValueError(f"empty 8K cloud observation: {layer}")
     temporary.replace(destination)
     return destination
 
@@ -76,16 +79,21 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
 
     stamp = observation.timestamp.astimezone(UTC).strftime("%Y%m%dT%H%MZ")
     prefix = observation.visible.name.split(stamp)[0].rstrip("-")
-    visible = _download(
-        observation.visible_layer,
-        observation.timestamp,
-        v2_cache / f"{prefix}-{stamp}-visible-8k.png",
-    )
-    infrared = _download(
-        observation.infrared_layer,
-        observation.timestamp,
-        v2_cache / f"{prefix}-{stamp}-infrared-8k.png",
-    )
+    try:
+        visible = _download(
+            observation.visible_layer, observation.timestamp,
+            v2_cache / f"{prefix}-{stamp}-visible-8k.png", cloud=True,
+        )
+        infrared = _download(
+            observation.infrared_layer, observation.timestamp,
+            v2_cache / f"{prefix}-{stamp}-infrared-8k.png", cloud=True,
+        )
+    except (OSError, ValueError):
+        # Preserve the same observed instant if the 8K endpoint is lagging.
+        # Native-resolution output is retained; only the cloud input falls back.
+        if not all(_valid_cloud_image(p) for p in (observation.visible, observation.infrared)):
+            raise
+        visible, infrared = observation.visible, observation.infrared
     return replace(
         observation,
         visible=visible,
