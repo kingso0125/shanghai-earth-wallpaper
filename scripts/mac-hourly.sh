@@ -23,6 +23,21 @@ if [[ -n "$latest_visible" ]]; then
     /bin/mv -f "$sync/${latest_visible:t}" "$cache/${latest_visible:t}"
     /bin/mv -f "$sync/${latest_infrared:t}" "$cache/${latest_infrared:t}"
     /bin/mv -f "$sync/manifest.json" "$cache/server-manifest.json"
+    # Reuse the same validated 8K cloud pair when available. A failed transfer
+    # leaves the existing cache intact; the renderer can still use the 4K pair.
+    stamp="${latest_visible:t}"
+    stamp="${stamp#himawari-}"
+    stamp="${stamp%-visible.png}"
+    v2_cache="$cache/cinematic-v2"
+    mkdir -p "$v2_cache"
+    if [[ ! -s "$v2_cache/himawari-$stamp-visible-8k.png" || ! -s "$v2_cache/himawari-$stamp-infrared-8k.png" ]]; then
+      if /usr/bin/scp -q -o BatchMode=yes -o ConnectTimeout=8 \
+        "$source_host:/var/cache/earthwall/cinematic-v2/himawari-$stamp-visible-8k.png" \
+        "$source_host:/var/cache/earthwall/cinematic-v2/himawari-$stamp-infrared-8k.png" "$sync/" 2>/dev/null; then
+        /bin/mv -f "$sync/himawari-$stamp-visible-8k.png" "$v2_cache/"
+        /bin/mv -f "$sync/himawari-$stamp-infrared-8k.png" "$v2_cache/"
+      fi
+    fi
   fi
   /bin/rm -rf "$sync"
 fi

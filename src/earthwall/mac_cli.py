@@ -2,26 +2,23 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import SHANGHAI, resolve_target
 from .preview_sources import upgrade_v2_observation
 from .preview_v2 import render_production_mac_pair
-from .sources import Observation, _newest_cached_pair, acquire_for_target
+from .sources import Observation, _acquire_static, _newest_cached_pair, acquire_for_target
 from .location import Location
 from .target import follow_server
 
 
 def acquire_mac(cache: Path, longitude: float = SHANGHAI[1]) -> Observation:
-    """Prefer a newer server-validated raw pair without changing phone acquisition."""
-    observation = acquire_for_target(cache, longitude)
-    if observation.source.startswith("EUMETSAT") or "GOES" in observation.source:
-        return observation
+    """Use the synchronized, validated observation before another network fetch."""
     manifest_path = cache / "server-manifest.json"
     cached = _newest_cached_pair(cache)
     if not manifest_path.exists() or cached is None:
-        return observation
+        return acquire_for_target(cache, longitude)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         timestamp, visible, infrared = cached
@@ -30,24 +27,27 @@ def acquire_mac(cache: Path, longitude: float = SHANGHAI[1]) -> Observation:
         )
         if (
             manifest.get("source_status") == "fresh"
+            and manifest.get("source", "").startswith("NASA GIBS / JMA")
             and timestamp == validated
-            and timestamp > observation.timestamp
+            and 0 <= (datetime.now(UTC) - timestamp).total_seconds() <= 3 * 3600
+            and abs((longitude - 140.7 + 180) % 360 - 180) < 75
         ):
+            base, lights, terrain = _acquire_static(cache)
             return Observation(
                 timestamp=timestamp,
                 visible=visible,
                 infrared=infrared,
                 geocolor=None,
-                base=observation.base,
-                lights=observation.lights,
+                base=base,
+                lights=lights,
                 status="fresh",
                 source=f"{manifest['source']} (synchronized raw observation)",
                 satellite_longitude=140.7,
-                terrain=observation.terrain,
+                terrain=terrain,
             )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    except (OSError, KeyError, TypeError, ValueError):
         pass
-    return observation
+    return acquire_for_target(cache, longitude)
 
 
 def main(argv=None) -> int:
