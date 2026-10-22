@@ -13,11 +13,12 @@ permissions:
 
 concurrency:
   group: earthwall-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   render:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
