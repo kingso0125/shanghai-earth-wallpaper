@@ -2,7 +2,7 @@
 
 每小时生成一组参考 Apple Astronomy Earth 质感的 iPhone Lock/Home 壁纸。主路径优先使用韩国 GK2A 原生全圆盘 GeoColor；默认将上海坐标 31.2304°N、121.4737°E 放在地球球面的正中心，启用手机定位后则将当前坐标放在同一视觉锚点，同时保持云层和地表为同一张卫星观测。
 
-正式渲染器为 `cinematic-earth-v2`：使用透视相机、真实可见光/红外云场、云下城市灯光、地形法线、暖色电影调色与柔化大气边缘。手机云端任务采用内存受控的工作分辨率并输出原生 1320×2868；Mac 在本机按 2560×1664 原生分辨率渲染同一视觉规则。
+正式渲染器为 `cinematic-earth-v2`，材质版本 `astronomy-matte-v26`：保留透视构图与真实云场，使用克制的海面反光、自然地表色彩、较薄的大气层和云下城市灯光。手机按原生 1320×2868 输出，Mac 按 2560×1664 原生分辨率渲染同一视觉规则。
 
 在线预览：<https://kingso0125.github.io/shanghai-earth-wallpaper/>
 
@@ -39,7 +39,7 @@ Mac 使用独立的原生 2560×1664 输出、缓存和 LaunchAgent，不改动�
 
 ## 每小时运行
 
-本机可执行 `scripts/hourly.sh`。云端使用 `.github/workflows/hourly-wallpaper.yml`，每小时渲染、质量检查并发布到 GitHub Pages；`.github/workflows/hourly-watchdog.yml` 在每小时 `:28` 检查线上发布时间，超过 50 分钟未更新时自动补跑，为手机 `:45` 换图及 CDN 缓存失效留出时间。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
+本机可执行 `scripts/hourly.sh`。服务器在每小时 `:17` 生成，通过检查后原子切换图片；GitHub Pages 主任务在 `:23` 优先下载服务器同一不可变版本的双图，校验 SHA-256、尺寸和画面质量后发布。服务器不可达或版本过期时，再独立渲染补图。`.github/workflows/hourly-watchdog.yml` 在每小时 `:28` 检查线上发布时间，超过 50 分钟未更新时自动补跑，为手机 `:45` 换图及 CDN 缓存失效留出时间。首次使用时需要在仓库 Settings → Pages 中将 Source 设为 GitHub Actions。
 
 作为 GitHub 原生 cron 的独立备援，阿里云服务器在每小时 `:25` 向仓库专用 `scheduler` 分支推送心跳，触发同一 watchdog。服务器只使用本仓库 Deploy Key，不保存 GitHub Token。详见 [docs/aliyun-scheduler.md](docs/aliyun-scheduler.md)。
 

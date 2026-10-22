@@ -5,11 +5,23 @@ import numpy as np
 from PIL import Image
 from earthwall.thermal import coldness, sample_coldness
 from earthwall.geometry import sample_equirectangular
-from earthwall.preview_v2 import cloud_material, _apple_night_ir_cloud, _cloud_layer, _cloud_volume_shading, V2_LOCK
+from earthwall.preview_v2 import cloud_material, _apple_night_ir_cloud, _cloud_layer, _cloud_volume_shading, _surface_radiance, V2_LOCK
 from earthwall.render import _city_light_signal
 
 
 class ReferenceMaterialTests(unittest.TestCase):
+    def test_noon_ocean_glint_retains_highlight_headroom(self):
+        normal = np.zeros((12, 12, 3), dtype=np.float32)
+        normal[..., 2] = 1
+        albedo = np.full_like(normal, .16)
+        ocean = np.ones((12, 12), dtype=np.float32)
+        surface, _ = _surface_radiance(
+            albedo, ocean, normal, normal, normal,
+            np.array([0, 0, 1], dtype=np.float32), apple_night=True,
+        )
+        self.assertTrue(np.isfinite(surface).all())
+        self.assertLess(float(surface.max()), .4)
+
     def test_sparse_thermal_decode_matches_full_plate_including_seam_and_poles(self):
         rng = np.random.default_rng(42)
         rgb = rng.integers(0, 256, (24, 48, 3), dtype=np.uint8)

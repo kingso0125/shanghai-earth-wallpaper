@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import json
 import re
 import ssl
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -46,8 +49,25 @@ class Observation:
 def _request(url: str, timeout: int = 90) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "earthwall/0.1"})
     context = ssl.create_default_context(cafile=certifi.where())
-    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
-        return response.read()
+    deadline = time.monotonic() + timeout
+    for attempt in range(3):
+        try:
+            remaining = max(0.1, deadline - time.monotonic())
+            with urllib.request.urlopen(request, timeout=min(30, remaining), context=context) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code not in {408, 429, 500, 502, 503, 504}:
+                raise
+            failure = error
+        except (OSError, http.client.HTTPException) as error:
+            # IncompleteRead is not an OSError. Normalise protocol failures so
+            # callers can retain a valid same-observation 4K/cache fallback.
+            failure = error if isinstance(error, OSError) else OSError(str(error))
+        delay = 0.5 * (attempt + 1)
+        if attempt == 2 or time.monotonic() + delay >= deadline:
+            raise failure
+        time.sleep(delay)
+    raise RuntimeError("request retries exhausted")
 
 
 def _atomic_download(url: str, destination: Path, expected_size=(4096, 2048)) -> None:

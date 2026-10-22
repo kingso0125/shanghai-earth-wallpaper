@@ -3,7 +3,7 @@ name: Hourly Earth Wallpaper
 on:
   workflow_call:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,11 @@ jobs:
           restore-keys: earthwall-cache-${{ runner.os }}-
       - run: pip install .
       - run: python -m unittest discover -s tests -v
-      - run: earthwall --cache cache --output public --follow-server
+      - name: Publish a verified server pair with independent render fallback
+        run: |
+          if ! python -m earthwall.delivery --output public; then
+            earthwall --cache cache --output public --follow-server
+          fi
       - run: earthwall-qa public | tee public/qa.json
       - run: python scripts/cleanup_server_cache.py cache
       - run: cp web/* public/

@@ -43,7 +43,10 @@ def _wms_url(layer: str, timestamp: datetime | None) -> str:
 def _valid(path: Path) -> bool:
     try:
         with Image.open(path) as image:
-            return image.size == PREVIEW_SIZE
+            if image.size != PREVIEW_SIZE:
+                return False
+            image.verify()
+            return True
     except (FileNotFoundError, OSError):
         return False
 

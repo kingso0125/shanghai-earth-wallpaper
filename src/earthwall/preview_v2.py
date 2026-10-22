@@ -302,8 +302,8 @@ def _material_albedo(base: np.ndarray, water: np.ndarray | None = None) -> tuple
     rgb = rgb * (1.0 - desert[..., None] * 0.15) + golden_land * desert[..., None] * 0.15
 
     lum = np.sum(rgb * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1, keepdims=True)
-    rgb = lum + (rgb - lum) * 1.065
-    rgb *= np.array([1.025, 1.010, 0.975], dtype=np.float32)
+    rgb = lum + (rgb - lum) * 1.015
+    rgb *= np.array([1.005, 1.000, 0.995], dtype=np.float32)
     ocean_soft = _blur_rgb(np.clip(rgb, 0.0, 1.0), 0.85)
     rgb = rgb * (1.0 - ocean[..., None] * 0.34) + ocean_soft * ocean[..., None] * 0.34
     return np.clip(rgb, 0.0, 1.0), ocean, land
@@ -354,7 +354,7 @@ def _surface_radiance(
         # Apple's Astronomy treatment keeps the unlit hemisphere legible.
         # This is a restrained ambient fill, not an invented light source: the
         # sun mask, terminator and all observed surface detail remain intact.
-        base_light += night * 0.073
+        base_light += night * 0.050
     radiance = _linear(albedo) * base_light[..., None]
     radiance += (
         ocean * daylight
@@ -364,13 +364,15 @@ def _surface_radiance(
     half_vector /= np.maximum(np.linalg.norm(half_vector, axis=-1, keepdims=True), 1e-6)
     highlight = np.power(np.clip(np.sum(normal * half_vector, axis=-1), 0.0, 1.0), 92.0)
     grazing = np.power(1.0 - np.clip(np.sum(normal * view, axis=-1), 0.0, 1.0), 4.5)
-    specular = ocean * daylight * (highlight * 1.65 + grazing * 0.055)
+    # A restrained ocean glint keeps the globe matte instead of producing a
+    # large cyan hotspot that flattens nearby clouds and coastlines at noon.
+    specular = ocean * daylight * (highlight * 0.26 + grazing * 0.035)
     radiance += specular[..., None] * np.array([0.40, 0.72, 0.91], dtype=np.float32)
     if apple_night:
         facing = np.clip(np.sum(geometric_normal * view, axis=-1), 0.0, 1.0)
         night_fill = night * (0.70 + facing * 0.30)
         radiance += night_fill[..., None] * np.array(
-            [0.0024, 0.0027, 0.0031], dtype=np.float32
+            [0.0008, 0.0010, 0.0015], dtype=np.float32
         )
         albedo_luminance = np.sum(
             albedo * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32),
@@ -378,10 +380,10 @@ def _surface_radiance(
         )
         material_midtones = np.power(smoothstep(0.08, 0.58, albedo_luminance), 0.78)
         radiance += (night * material_midtones * (1.0 - ocean))[..., None] * np.array(
-            [0.0300, 0.0282, 0.0260], dtype=np.float32
+            [0.0160, 0.0152, 0.0144], dtype=np.float32
         )
         radiance += (ocean * night)[..., None] * np.array(
-            [0.0008, 0.0038, 0.0054], dtype=np.float32
+            [0.0004, 0.0018, 0.0032], dtype=np.float32
         )
     return radiance.astype(np.float32), solar_cos.astype(np.float32)
 
@@ -421,7 +423,7 @@ def cloud_material(
         # into flat white masks, and keep cities underneath the same opacity.
         fine = _blur_scalar(observed, 0.65 * detail_scale)
         broad = _blur_scalar(observed, 5.0 * detail_scale)
-        structure = np.clip(observed + (observed - fine) * 0.18 + (fine - broad) * 0.16, 0, 1)
+        structure = np.clip(observed + (observed - fine) * 0.08 + (fine - broad) * 0.08, 0, 1)
         optical_depth = -np.log(np.maximum(1.0 - alpha * 0.97, 0.02))
         # Increase the optical path of medium/thick bodies, not their extent.
         # Thin cirrus remains translucent; dense cores hide the terrain/lights.
@@ -431,9 +433,9 @@ def cloud_material(
         opacity *= alpha > 0
         day = smoothstep(-0.10, 0.30, solar_cos)
         reflectance = 0.40 + np.power(structure, 0.88) * 0.47
-        day_radiance = _linear(reflectance[..., None] * np.array([1.0, 0.985, 0.958], dtype=np.float32))
-        day_radiance *= (0.36 + np.power(np.clip(solar_cos, 0, 1), 0.6) * 0.74)[..., None]
-        night_reflectance = 0.22 + np.power(structure, 0.82) * 0.198
+        day_radiance = _linear(reflectance[..., None] * np.array([1.0, 0.995, 0.985], dtype=np.float32))
+        day_radiance *= (0.30 + np.power(np.clip(solar_cos, 0, 1), 0.6) * 0.70)[..., None]
+        night_reflectance = 0.15 + np.power(structure, 0.90) * 0.235
         night_radiance = _linear(night_reflectance[..., None] * np.array([0.91, 0.94, 1.0], dtype=np.float32))
         radiance = day_radiance * day[..., None] + night_radiance * (1.0 - day[..., None])
         return CloudProperties(np.clip(opacity, 0, 0.975).astype(np.float32), radiance.astype(np.float32))
@@ -579,8 +581,8 @@ def atmosphere_scattering(
     rim = limb * visible * sunward
 
     mask_image = Image.fromarray(np.uint8(visible * 255), "L")
-    near_radius = size[0] * (0.0075 if apple_night else 0.0062)
-    far_radius = size[0] * (0.024 if apple_night else 0.017)
+    near_radius = size[0] * (0.0040 if apple_night else 0.0062)
+    far_radius = size[0] * (0.012 if apple_night else 0.017)
     near = np.asarray(
         mask_image.filter(ImageFilter.GaussianBlur(max(5, near_radius))), dtype=np.float32
     ) / 255.0
@@ -778,7 +780,7 @@ def _render_region(
         light_rgb = np.clip(lights[..., :3], 0, 1)
         emission_gate = 1.0 - smoothstep(0.012, 0.08, light_rgb[..., 2] - light_rgb[..., 0])
         emission = _linear(np.clip((light_rgb - 0.028) / 0.972, 0, 1))
-        earth += emission * (night * emission_gate * 0.85)[..., None] * np.array([1.10, 0.82, 0.42], dtype=np.float32)
+        earth += emission * (night * emission_gate * 0.62)[..., None] * np.array([1.04, 0.90, 0.64], dtype=np.float32)
         del light_rgb, emission_gate, emission
     else:
         light_signal = np.power(np.clip(_city_light_signal(lights), 0, 1), 1.32)
@@ -822,9 +824,9 @@ def _render_region(
             + daylight_atmosphere[..., None]
             * (atmosphere_color - night_atmosphere_color)
         )
-        rim_strength = 0.14 + daylight_atmosphere * 0.025
+        rim_strength = 0.105 + daylight_atmosphere * 0.040
         night_fraction = float(night[visible].mean())
-        halo_strength = 0.16 - night_fraction * 0.015
+        halo_strength = 0.12 - night_fraction * 0.035
         halo_color = (
             night_atmosphere_color * night_fraction
             + atmosphere_color * (1.0 - night_fraction)
@@ -905,7 +907,7 @@ def render_preview_one(
     if output_size is not None and image.size != output_size:
         image = image.resize(output_size, Image.Resampling.LANCZOS)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    image.save(destination, quality=97, subsampling=0)
+    image.save(destination, quality=97, subsampling=0, optimize=True, progressive=True)
 
 
 def render_preview_pair(
@@ -972,8 +974,8 @@ def _production_manifest(
     manifest = {
         "profile": profile,
         "renderer": "cinematic-earth-v2",
-        "style": "reference-atmosphere-v25",
-        "cloud_material": "observed-volume-r2",
+        "style": "astronomy-matte-v26",
+        "cloud_material": "observed-volume-r3",
         "preview_only": False,
         "observation_utc": observation.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),
         "lighting_utc": lighting_time.astimezone(UTC).isoformat().replace("+00:00", "Z"),
