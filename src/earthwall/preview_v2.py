@@ -398,6 +398,10 @@ def _surface_radiance(
         # sun mask, terminator and all observed surface detail remain intact.
         base_light += night * 0.050
     radiance = _linear(albedo) * base_light[..., None]
+    if apple_night:
+        # A saturated blue environment fill preserves material detail without
+        # carrying the daytime brown tint into the unlit hemisphere.
+        radiance *= 1 + night[..., None] * np.array([-.68, -.10, 1.10], dtype=np.float32)
     radiance += (
         ocean * daylight
     )[..., None] * np.array([0.004, 0.024, 0.048], dtype=np.float32)
@@ -422,10 +426,10 @@ def _surface_radiance(
         )
         material_midtones = np.power(smoothstep(0.08, 0.58, albedo_luminance), 0.78)
         radiance += (night * material_midtones * (1.0 - ocean))[..., None] * np.array(
-            [0.0160, 0.0152, 0.0144], dtype=np.float32
+            [0.0020, 0.0120, 0.0300], dtype=np.float32
         )
         radiance += (ocean * night)[..., None] * np.array(
-            [0.0004, 0.0018, 0.0032], dtype=np.float32
+            [0.0003, 0.0042, 0.0135], dtype=np.float32
         )
     return radiance.astype(np.float32), solar_cos.astype(np.float32)
 
@@ -478,7 +482,7 @@ def cloud_material(
         day_radiance = _linear(reflectance[..., None] * np.array([1.0, 0.995, 0.985], dtype=np.float32))
         day_radiance *= (0.30 + np.power(np.clip(solar_cos, 0, 1), 0.6) * 0.70)[..., None]
         night_reflectance = 0.15 + np.power(structure, 0.90) * 0.31
-        night_radiance = _linear(night_reflectance[..., None] * np.array([0.91, 0.94, 1.0], dtype=np.float32))
+        night_radiance = _linear(night_reflectance[..., None] * np.array([0.68, 0.82, 1.0], dtype=np.float32))
         radiance = day_radiance * day[..., None] + night_radiance * (1.0 - day[..., None])
         return CloudProperties(np.clip(opacity, 0, 0.99).astype(np.float32), radiance.astype(np.float32))
     daylight_curve = smoothstep(-0.08, 0.32, solar_cos)
@@ -678,14 +682,14 @@ def _soft_bloom(linear_rgb: np.ndarray) -> np.ndarray:
 
 
 def _apple_night_midtone_grade(earth: np.ndarray, night: np.ndarray) -> np.ndarray:
-    """Open night midtones while retaining black oceans and light highlights."""
+    """Open coloured night midtones while retaining light highlights."""
     luminance = np.sum(
         earth * np.array([0.2126, 0.7152, 0.0722], dtype=np.float32), axis=-1
     )
     toe = smoothstep(0.0018, 0.011, luminance)
     highlight_rolloff = 1.0 - smoothstep(0.060, 0.27, luminance)
     lift = night * toe * highlight_rolloff
-    # Multiplicative toe lift preserves blue water and warm land; adding the
+    # Multiplicative toe lift preserves blue material and warm lights; adding the
     # same grey floor everywhere destroyed colour and cloud contrast at night.
     return earth * (1.0 + lift[..., None] * 0.42)
 
@@ -890,7 +894,7 @@ def _render_region(
     atmosphere_color = np.array([0.20, 0.67, 1.16], dtype=np.float32)
     if apple_night:
         daylight_atmosphere = smoothstep(-0.08, 0.32, solar_cos)
-        night_atmosphere_color = np.array([0.43, 0.80, 1.07], dtype=np.float32)
+        night_atmosphere_color = np.array([0.16, 0.50, 1.20], dtype=np.float32)
         atmosphere_tone = (
             night_atmosphere_color
             + daylight_atmosphere[..., None]
@@ -1048,6 +1052,7 @@ def _production_manifest(
         "renderer": "cinematic-earth-v2",
         "style": "astronomy-relief-v27",
         "cloud_material": "observed-volume-r4",
+        "night_palette": "saturated-blue-r1",
         "night_cloud_input": {
             "source": "JMA Himawari-9 calibrated HSD Band 13 / NOAA archive"
                 if observation.brightness_temperature else "browse image fallback",

@@ -9,6 +9,8 @@
 - 校准原始数据并行下载，最长预算 4 分钟；逐段验证并缓存，失败重试可复用完整分段。正式生成要求有效校准温度，下载中断、缺帧、校验不通过时保留上次验证的完整壁纸，不发布半套图片或退回旧版夜云。离线预览可显式使用同观测的彩图备用，manifest 会标识。
 - Mac 同步服务器同一时刻的温度数据；服务器与 Pages 仍使用现有成对发布流程，每小时计划保留。
 
+- 按用户要求保留高饱和蓝色夜景：深蓝海洋、蓝青陆地阴影、冷蓝云层与蓝色大气；城市灯光独立保持暖金色。`night_palette=saturated-blue-r1`。
+
 ## 数据与限制
 
 高程源：[NOAA ETOPO 2022](https://www.ncei.noaa.gov/products/etopo-global-relief-model)。由 60 arc-second 数据每 4 点取样，制作成 5400 × 2700、uint16 米制陆地高程；低于海平面部分置零。生成工具为 `scripts/prepare-elevation.py`，仅离线转换需 scipy，运行时无新增依赖。
