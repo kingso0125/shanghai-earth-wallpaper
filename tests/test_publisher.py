@@ -23,7 +23,7 @@ class PublisherTests(unittest.TestCase):
                 "earthwall.publisher.upgrade_v2_observation", side_effect=OSError("raw frame incomplete")
             ), self.assertRaises(OSError):
                 publisher.publish(Location(*SHANGHAI, "Shanghai"))
-            self.assertEqual((output / "current").resolve(), previous)
+            self.assertEqual((output / "current").resolve(), previous.resolve())
             self.assertEqual((output / "current/home.jpg").read_bytes(), b"verified wallpaper")
             self.assertFalse(list((output / "releases").glob(".render-*")))
 
