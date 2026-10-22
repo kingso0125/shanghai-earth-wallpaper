@@ -600,8 +600,9 @@ def _cloud_volume_shading(
     fine = _blur_scalar(observed, 0.7 * detail_scale)
     middle = _blur_scalar(observed, 2.4 * detail_scale)
     broad = _blur_scalar(observed, 14.0 * detail_scale)
-    crests = np.clip((fine - middle) * 4.2 + (middle - broad) * 3.2, -.42, .48)
-    sky_occlusion = np.clip((broad - middle) * 3.8, 0, .42)
+    crests = np.clip((fine - middle) * (4.2 - daylight * 2.4)
+                     + (middle - broad) * (3.2 - daylight * .8), -.42, .48)
+    sky_occlusion = np.clip((broad - middle) * (3.8 - daylight), 0, .42)
     gy, gx = np.gradient(middle * .70 + broad * .30)
     slope_x = np.clip(gx * (20 * detail_scale), -.85, .85)
     slope_y = np.clip(gy * (20 * detail_scale), -.85, .85)
@@ -808,15 +809,10 @@ def _render_region(
             axis=-1,
         )
         daytime_texture = np.power(smoothstep(0.025, 0.96, visible_luminance), 0.90)
-        daytime_fine = _blur_scalar(daytime_texture, 1.4)
-        daytime_broad = _blur_scalar(daytime_texture, 10.0)
-        daytime_texture = np.clip(
-            daytime_texture
-            + (daytime_texture - daytime_fine) * 0.10
-            + (daytime_fine - daytime_broad) * 0.16,
-            0.0,
-            1.0,
-        )
+        # The volume stage already supplies local contrast. Sharpening this
+        # input again clips bright cores and makes wispy edges look brittle.
+        daytime_texture = (daytime_texture * .8
+                           + _blur_scalar(daytime_texture, .55) * .2)
         thermal_texture = (
             apple_thermal_texture
             if apple_thermal_texture is not None
@@ -830,7 +826,7 @@ def _render_region(
             1.0,
         )
         del cloud_visible_image, cloud_infrared, coverage, visible_luminance
-        del daytime_texture, daytime_fine, daytime_broad, thermal_texture, day_texture_mix
+        del daytime_texture, thermal_texture, day_texture_mix
         del apple_thermal_texture
         if apple_night:
             del night_alpha, night_weight
