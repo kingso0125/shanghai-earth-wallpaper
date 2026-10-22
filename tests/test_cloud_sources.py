@@ -75,6 +75,17 @@ class CloudSourceTests(unittest.TestCase):
         raw.assert_called_once_with(Path("cache/cinematic-v2"), observation.timestamp)
         self.assertEqual(result.brightness_temperature, Path("temperature.npz"))
 
+    def test_production_rejects_uncalibrated_cloud_downgrade(self):
+        observation = Observation(
+            datetime(2026, 10, 22, 14, 20, tzinfo=UTC), Path("visible.png"),
+            Path("infrared.png"), None, Path("base.png"), Path("lights.png"), "fresh",
+            source="NASA GIBS / JMA Himawari-9",
+        )
+        with patch("earthwall.preview_sources._download", return_value=Path("valid")), patch(
+            "earthwall.preview_sources.acquire_temperature", side_effect=OSError("offline")
+        ), self.assertRaisesRegex(OSError, "last verified wallpaper"):
+            upgrade_v2_observation(Path("cache"), observation, require_calibrated=True)
+
     def test_empty_8k_and_invalid_4k_fail_closed(self):
         observation = Observation(
             datetime(2026, 9, 7, 11, 30, tzinfo=UTC), Path("visible.png"),

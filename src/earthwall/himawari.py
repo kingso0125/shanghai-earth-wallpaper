@@ -86,15 +86,33 @@ def acquire_temperature(cache: Path, timestamp: datetime) -> Path:
         except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
             pass
     prefix = timestamp.strftime("AHI-L1b-FLDK/%Y/%m/%d/%H%M/HS_H09_%Y%m%d_%H%M_B13_FLDK_R20")
-    deadline = time.monotonic() + 180
+    deadline = time.monotonic() + 240
+    segments = cache / "hsd" / stamp
+    segments.mkdir(parents=True, exist_ok=True)
+    for old_frame in sorted(segments.parent.iterdir(), reverse=True)[2:]:
+        if old_frame.is_dir():
+            for old in old_frame.glob("S*.bz2*"):
+                old.unlink(missing_ok=True)
+            old_frame.rmdir()
 
     def fetch(sequence):
+        part = segments / f"S{sequence:02d}.bz2"
+        if part.exists():
+            try:
+                return decode_segment(part.read_bytes(), timestamp, sequence)
+            except (OSError, ValueError, EOFError, struct.error):
+                part.unlink(missing_ok=True)
         remaining = deadline - time.monotonic()
         if remaining < 1:
             raise OSError("Himawari temperature download budget exceeded")
         url = f"https://noaa-himawari9.s3-external-1.amazonaws.com/{prefix}_S{sequence:02d}10.DAT.bz2"
         try:
-            return decode_segment(_request(url, timeout=int(remaining)), timestamp, sequence)
+            payload = _request(url, timeout=int(remaining))
+            decoded = decode_segment(payload, timestamp, sequence)
+            temporary_part = part.with_suffix(".bz2.tmp")
+            temporary_part.write_bytes(payload)
+            temporary_part.replace(part)
+            return decoded
         except (struct.error, EOFError) as error:
             raise ValueError("invalid Himawari segment") from error
 
@@ -115,6 +133,9 @@ def acquire_temperature(cache: Path, timestamp: datetime) -> Path:
         np.savez_compressed(stream, counts=counts, temperature=reference_temperature,
                             projection=reference_projection, timestamp=timestamp.isoformat())
     temporary.replace(destination)
+    for part in segments.glob("S*.bz2"):
+        part.unlink(missing_ok=True)
+    segments.rmdir()
     for old in sorted(cache.glob("himawari-*-band13.npz"), reverse=True)[6:]:
         old.unlink(missing_ok=True)
     return destination

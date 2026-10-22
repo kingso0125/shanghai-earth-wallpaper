@@ -36,7 +36,7 @@ class Publisher:
             staging.chmod(0o755)
             try:
                 observation = acquire_for_target(self.cache, location.longitude)
-                observation = upgrade_v2_observation(self.cache, observation)
+                observation = upgrade_v2_observation(self.cache, observation, require_calibrated=True)
                 manifest = render_production_pair(
                     observation,
                     staging,

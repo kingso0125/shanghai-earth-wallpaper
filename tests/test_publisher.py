@@ -10,6 +10,23 @@ from earthwall.publisher import Publisher
 
 
 class PublisherTests(unittest.TestCase):
+    def test_source_failure_keeps_last_complete_release_and_cleans_staging(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output"
+            previous = output / "releases/previous"
+            previous.mkdir(parents=True)
+            (previous / "home.jpg").write_bytes(b"verified wallpaper")
+            (output / "current").symlink_to("releases/previous")
+            publisher = Publisher(output, root / "cache", root / "render.lock")
+            with patch("earthwall.publisher.acquire_for_target", return_value=object()), patch(
+                "earthwall.publisher.upgrade_v2_observation", side_effect=OSError("raw frame incomplete")
+            ), self.assertRaises(OSError):
+                publisher.publish(Location(*SHANGHAI, "Shanghai"))
+            self.assertEqual((output / "current").resolve(), previous)
+            self.assertEqual((output / "current/home.jpg").read_bytes(), b"verified wallpaper")
+            self.assertFalse(list((output / "releases").glob(".render-*")))
+
     def test_published_release_is_traversable_by_nginx(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

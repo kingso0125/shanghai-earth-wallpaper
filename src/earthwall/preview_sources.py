@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.parse
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,7 +72,7 @@ def _download(layer: str, timestamp: datetime | None, destination: Path, *, clou
     return destination
 
 
-def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation:
+def upgrade_v2_observation(cache: Path, observation: Observation, *, require_calibrated: bool = False) -> Observation:
     """Upgrade an observation to the approved 8K V2 rendering assets."""
     v2_cache = cache / "cinematic-v2"
     base = _download(BASE_LAYER, None, v2_cache / "blue-marble-8k.png")
@@ -104,10 +105,12 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
     if observation.source.startswith("NASA GIBS / JMA") and observation.infrared_layer == IR_LAYER:
         try:
             temperature = acquire_temperature(v2_cache, observation.timestamp)
-        except (OSError, ValueError, EOFError):
+        except (OSError, ValueError, EOFError) as error:
             # Keep the paired, same-instant browse observation if the raw
             # archive is unavailable; the manifest identifies this fallback.
-            pass
+            logging.getLogger(__name__).warning("Himawari temperature unavailable at %s: %s", observation.timestamp, error)
+            if require_calibrated:
+                raise OSError("calibrated cloud data unavailable; keep the last verified wallpaper") from error
     return replace(
         observation,
         visible=visible,

@@ -4,10 +4,11 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
-from earthwall.himawari import decode_segment, sample_temperature, scan_coordinates
+from earthwall.himawari import acquire_temperature, decode_segment, sample_temperature, scan_coordinates
 
 
 PROJECTION = np.array([140.7, 20466275, 20466275, 2750.5, 2750.5,
@@ -41,6 +42,32 @@ def synthetic_segment():
 
 
 class HimawariTests(unittest.TestCase):
+    def test_partial_frame_is_not_published_and_completed_segments_are_reused(self):
+        def decoded(payload, timestamp, sequence):
+            return (np.zeros((550, 5500), dtype=np.uint16),
+                    np.full(65536, 280, dtype=np.float32), PROJECTION)
+
+        def partial(url, timeout):
+            if not url.endswith('S0110.DAT.bz2'):
+                raise OSError('interrupted')
+            return b'validated segment'
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            with patch('earthwall.himawari.decode_segment', side_effect=decoded), patch(
+                'earthwall.sources._request', side_effect=partial
+            ):
+                with self.assertRaises(OSError):
+                    acquire_temperature(cache, STAMP)
+            self.assertFalse(list(cache.glob('*.npz')))
+            self.assertTrue((cache / 'hsd/20261022T1420Z/S01.bz2').exists())
+            with patch('earthwall.himawari.decode_segment', side_effect=decoded), patch(
+                'earthwall.sources._request', return_value=b'validated segment'
+            ) as request:
+                result = acquire_temperature(cache, STAMP)
+            self.assertEqual(request.call_count, 9)
+            self.assertTrue(result.exists())
+
     def test_calibration_matches_planck_and_rejects_fill_counts(self):
         pixels, lookup, projection = decode_segment(synthetic_segment(), STAMP, 5)
         wave, light, planck, boltzmann = 10.4074e-6, 299792458, 6.62606957e-34, 1.3806488e-23

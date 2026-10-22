@@ -66,7 +66,7 @@ def main(argv=None) -> int:
         target = follow_server(args.cache, Location(latitude, longitude, location_name))
         latitude, longitude, location_name = target.latitude, target.longitude, target.name
     observation = acquire_mac(args.cache, longitude)
-    observation = upgrade_v2_observation(args.cache, observation)
+    observation = upgrade_v2_observation(args.cache, observation, require_calibrated=True)
     manifest = render_production_mac_pair(
         observation,
         args.output,
