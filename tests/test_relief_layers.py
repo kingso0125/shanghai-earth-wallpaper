@@ -7,9 +7,18 @@ from PIL import Image
 
 from earthwall.elevation import ELEVATION, terrain_normals
 from earthwall.preview_v2 import _blur_scalar, _cloud_layer, V2_LOCK
+from earthwall.geometry import sample_equirectangular
 
 
 class ReliefLayerTests(unittest.TestCase):
+    def test_non_power_of_two_height_map_wraps_antimeridian_rounding(self):
+        height = np.zeros((4, 5400, 1), dtype=np.uint16)
+        height[:, 0] = 100
+        latitude = np.zeros((1, 1), dtype=np.float32)
+        longitude = np.array([[-3.141593]], dtype=np.float32)
+        sampled = sample_equirectangular(height, latitude, longitude)
+        self.assertAlmostEqual(float(sampled[0, 0, 0]), 100, places=2)
+
     def test_cloud_filter_preserves_sub_8bit_gradients(self):
         ramp = np.tile(np.linspace(.4501, .4510, 48, dtype=np.float32), (32, 1))
         for radius in (.65, 4):

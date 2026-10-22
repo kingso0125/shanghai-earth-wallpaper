@@ -41,11 +41,14 @@ def sample_equirectangular(image: np.ndarray, lat: np.ndarray, lon: np.ndarray):
     height, width = image.shape[:2]
     xf = ((lon + np.pi) / (2.0 * np.pi) * width) % width
     yf = np.clip((np.pi / 2.0 - lat) / np.pi * (height - 1), 0, height - 1)
-    x0 = np.floor(xf).astype(np.int32)
+    # Float32 modulo can round a tiny negative longitude to exactly ``width``.
+    # Wrap the integer index too, keeping interpolation weights unwrapped.
+    floor_x = np.floor(xf)
+    x0 = floor_x.astype(np.int32) % width
     y0 = np.floor(yf).astype(np.int32)
     x1 = (x0 + 1) % width
     y1 = np.minimum(y0 + 1, height - 1)
-    wx = (xf - x0)[..., None].astype(np.float32)
+    wx = (xf - floor_x)[..., None].astype(np.float32)
     wy = (yf - y0)[..., None].astype(np.float32)
     top = image[y0, x0] * (1.0 - wx) + image[y0, x1] * wx
     bottom = image[y1, x0] * (1.0 - wx) + image[y1, x1] * wx
