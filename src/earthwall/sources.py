@@ -258,7 +258,13 @@ def _acquire_gibs_layers(
         # transparent IR placeholder as a real, cloud-free observation.
         capabilities = _request(GIBS_CAPABILITIES).decode("utf-8")
         timestamp = latest_common_time(capabilities)
-        visible, infrared = _gibs_pair(cache, timestamp)
+        if (cached is not None and timestamp < cached[0] <= now
+                and (now - cached[0]).total_seconds() <= 3 * 3600):
+            # WMS's fallback clock can lag a frame already validated locally.
+            # Do not move the cloud field backwards after a newer WMTS miss.
+            timestamp, visible, infrared = cached
+        else:
+            visible, infrared = _gibs_pair(cache, timestamp)
     return Observation(
         timestamp,
         visible,

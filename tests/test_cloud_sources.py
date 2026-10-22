@@ -1,5 +1,5 @@
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -13,6 +13,20 @@ from earthwall.sources import (
 
 
 class CloudSourceTests(unittest.TestCase):
+    def test_lagging_wms_fallback_cannot_replace_a_newer_valid_cached_frame(self):
+        now = datetime.now(UTC)
+        announced, cached_time, fallback = now-timedelta(minutes=10), now-timedelta(minutes=30), now-timedelta(minutes=90)
+        cached = (cached_time, Path('cached-visible.png'), Path('cached-infrared.png'))
+        with patch('earthwall.sources.latest_gibs_time', return_value=announced), patch(
+            'earthwall.sources._newest_cached_pair', return_value=cached
+        ), patch('earthwall.sources._gibs_pair', side_effect=ValueError('announced pixels missing')) as fetch, patch(
+            'earthwall.sources._request', return_value=b'capabilities'
+        ), patch('earthwall.sources.latest_common_time', return_value=fallback):
+            observation = _acquire_gibs_layers(Path('cache'), Path('base'), Path('lights'), None)
+        self.assertEqual(observation.timestamp, cached_time)
+        self.assertEqual(observation.visible, cached[1])
+        self.assertEqual(fetch.call_count, 1)
+
     def test_transparent_placeholder_rejected_but_black_night_accepted(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "cloud.png"
