@@ -9,7 +9,7 @@ from earthwall.sources import _request
 class NetworkTests(unittest.TestCase):
     def response(self):
         response = MagicMock()
-        response.__enter__.return_value.read.return_value = b"image"
+        response.__enter__.return_value.read1.side_effect = [b"image", b""]
         return response
 
     @patch("earthwall.sources.time.sleep")
@@ -38,14 +38,29 @@ class NetworkTests(unittest.TestCase):
     @patch("earthwall.sources.time.sleep")
     def test_truncated_http_body_can_recover(self, _sleep):
         broken = MagicMock()
-        broken.__enter__.return_value.read.side_effect = IncompleteRead(b"partial")
+        broken.__enter__.return_value.read1.side_effect = IncompleteRead(b"partial")
         with patch("earthwall.sources.urllib.request.urlopen", side_effect=[broken, self.response()]):
             self.assertEqual(_request("https://example.test/image"), b"image")
 
     @patch("earthwall.sources.time.sleep")
     def test_exhausted_partial_reads_reach_existing_cache_fallback(self, _sleep):
         broken = MagicMock()
-        broken.__enter__.return_value.read.side_effect = IncompleteRead(b"partial")
+        broken.__enter__.return_value.read1.side_effect = IncompleteRead(b"partial")
         with patch("earthwall.sources.urllib.request.urlopen", return_value=broken):
             with self.assertRaises(OSError):
                 _request("https://example.test/image")
+
+    @patch("earthwall.sources.time.sleep")
+    def test_truncated_content_length_is_rejected(self, _sleep):
+        broken = [self.response() for _ in range(3)]
+        for response in broken:
+            response.__enter__.return_value.headers.get.return_value = "9"
+        with patch("earthwall.sources.urllib.request.urlopen", side_effect=broken):
+            with self.assertRaisesRegex(OSError, "truncated"):
+                _request("https://example.test/image")
+
+    @patch("earthwall.sources.time.monotonic", side_effect=[0, 0, 0, 11, 11])
+    def test_slow_stream_cannot_bypass_download_budget(self, _time):
+        with patch("earthwall.sources.urllib.request.urlopen", return_value=self.response()):
+            with self.assertRaisesRegex(OSError, "time budget"):
+                _request("https://example.test/image", timeout=10)

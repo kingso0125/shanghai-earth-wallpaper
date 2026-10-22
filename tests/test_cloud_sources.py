@@ -47,15 +47,33 @@ class CloudSourceTests(unittest.TestCase):
         observation = Observation(
             datetime(2026, 9, 7, 11, 30, tzinfo=UTC), Path("visible.png"),
             Path("infrared.png"), None, Path("base.png"), Path("lights.png"), "fresh",
+            source="NASA GIBS / JMA Himawari-9",
         )
         with patch("earthwall.preview_sources._download", side_effect=[
             Path("base8"), Path("lights8"), Path("terrain8"), Path("water8"),
             Path("visible8"), ValueError("empty 8K IR"),
-        ]), patch("earthwall.preview_sources._valid_cloud_image", return_value=True):
+        ]), patch("earthwall.preview_sources._valid_cloud_image", return_value=True), patch(
+            "earthwall.preview_sources.acquire_temperature", side_effect=OSError("offline")
+        ):
             result = upgrade_v2_observation(Path("cache"), observation)
         self.assertEqual(result.visible, observation.visible)
         self.assertEqual(result.infrared, observation.infrared)
         self.assertEqual(result.timestamp, observation.timestamp)
+        self.assertIsNone(result.brightness_temperature)
+
+    def test_calibrated_cloud_data_matches_the_visible_observation(self):
+        observation = Observation(
+            datetime(2026, 10, 22, 14, 20, tzinfo=UTC), Path("visible.png"),
+            Path("infrared.png"), None, Path("base.png"), Path("lights.png"), "fresh",
+            source="NASA GIBS / JMA Himawari-9",
+        )
+        with patch("earthwall.preview_sources._download", side_effect=[
+            Path("base8"), Path("lights8"), Path("terrain8"), Path("water8"),
+            Path("visible8"), Path("infrared8"),
+        ]), patch("earthwall.preview_sources.acquire_temperature", return_value=Path("temperature.npz")) as raw:
+            result = upgrade_v2_observation(Path("cache"), observation)
+        raw.assert_called_once_with(Path("cache/cinematic-v2"), observation.timestamp)
+        self.assertEqual(result.brightness_temperature, Path("temperature.npz"))
 
     def test_empty_8k_and_invalid_4k_fail_closed(self):
         observation = Observation(

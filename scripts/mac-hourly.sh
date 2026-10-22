@@ -38,6 +38,12 @@ if [[ -n "$latest_visible" ]]; then
         /bin/mv -f "$sync/himawari-$stamp-infrared-8k.png" "$v2_cache/"
       fi
     fi
+    if [[ ! -s "$v2_cache/himawari-$stamp-band13.npz" ]]; then
+      if /usr/bin/scp -q -o BatchMode=yes -o ConnectTimeout=8 \
+        "$source_host:/var/cache/earthwall/cinematic-v2/himawari-$stamp-band13.npz" "$sync/" 2>/dev/null; then
+        /bin/mv -f "$sync/himawari-$stamp-band13.npz" "$v2_cache/"
+      fi
+    fi
   fi
   /bin/rm -rf "$sync"
 fi

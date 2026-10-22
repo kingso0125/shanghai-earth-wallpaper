@@ -44,6 +44,8 @@ class Observation:
     water_mask: Path | None = None
     visible_layer: str = VISIBLE_LAYER
     infrared_layer: str = IR_LAYER
+    elevation: Path | None = None
+    brightness_temperature: Path | None = None
 
 
 def _request(url: str, timeout: int = 90) -> bytes:
@@ -54,7 +56,21 @@ def _request(url: str, timeout: int = 90) -> bytes:
         try:
             remaining = max(0.1, deadline - time.monotonic())
             with urllib.request.urlopen(request, timeout=min(30, remaining), context=context) as response:
-                return response.read()
+                # Socket timeouts alone do not bound a slowly streaming body.
+                # Check the overall budget between reads as well.
+                chunks, size = [], 0
+                expected = response.headers.get("Content-Length", "")
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise OSError("download exceeded its time budget")
+                    chunk = response.read1(256 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                if isinstance(expected, str) and expected.isdigit() and size != int(expected):
+                    raise OSError("truncated HTTP response")
+                return b"".join(chunks)
         except urllib.error.HTTPError as error:
             if error.code not in {408, 429, 500, 502, 503, 504}:
                 raise

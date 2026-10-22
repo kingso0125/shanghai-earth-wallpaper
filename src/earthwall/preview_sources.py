@@ -16,6 +16,8 @@ from .config import (
     VISIBLE_LAYER,
 )
 from .sources import Observation, _request, _valid_cloud_image
+from .elevation import ELEVATION
+from .himawari import acquire_temperature
 
 
 PREVIEW_SIZE = (8192, 4096)
@@ -76,7 +78,8 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
     lights = _download(LIGHTS_LAYER, None, v2_cache / "city-lights-8k.png")
     terrain = _download(TERRAIN_LAYER, None, v2_cache / "terrain-relief-8k.png")
     water_mask = _download("MODIS_Water_Mask", None, v2_cache / "water-mask-8k.png")
-    observation = replace(observation, water_mask=water_mask)
+    observation = replace(observation, water_mask=water_mask,
+                          elevation=ELEVATION if ELEVATION.exists() else None)
     if observation.geocolor is not None or observation.source.startswith("EUMETSAT"):
         return replace(observation, base=base, lights=lights, terrain=terrain)
 
@@ -97,6 +100,14 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
         if not all(_valid_cloud_image(p) for p in (observation.visible, observation.infrared)):
             raise
         visible, infrared = observation.visible, observation.infrared
+    temperature = None
+    if observation.source.startswith("NASA GIBS / JMA") and observation.infrared_layer == IR_LAYER:
+        try:
+            temperature = acquire_temperature(v2_cache, observation.timestamp)
+        except (OSError, ValueError, EOFError):
+            # Keep the paired, same-instant browse observation if the raw
+            # archive is unavailable; the manifest identifies this fallback.
+            pass
     return replace(
         observation,
         visible=visible,
@@ -104,6 +115,7 @@ def upgrade_v2_observation(cache: Path, observation: Observation) -> Observation
         base=base,
         lights=lights,
         terrain=terrain,
+        brightness_temperature=temperature,
     )
 
 
