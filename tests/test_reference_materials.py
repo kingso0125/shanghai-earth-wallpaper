@@ -46,6 +46,33 @@ class ReferenceMaterialTests(unittest.TestCase):
         self.assertTrue(np.all(np.diff(alpha[24, 4:-4]) > 0))
         self.assertGreater(float(texture.std()), .15)
 
+    def test_plateau_reduces_ambiguous_ir_but_preserves_cold_storm_tops(self):
+        field = np.full((32, 32), .38, dtype=np.float32)
+        infrared = np.zeros((*field.shape, 4), dtype=np.float32)
+        plateau = np.full_like(field, 5000)
+        for coldness in (.38, .80):
+            field.fill(coldness)
+            low, _ = _apple_night_ir_cloud(infrared, thermal=field)
+            high, _ = _apple_night_ir_cloud(infrared, thermal=field, height_meters=plateau)
+            if coldness < .4:
+                self.assertLess(high.mean(), low.mean() * .5)
+            else:
+                np.testing.assert_array_equal(high, low)
+
+    def test_mountain_slope_cannot_receive_direct_sun_in_deep_night(self):
+        shape = (12, 12, 3)
+        ground = np.zeros(shape, dtype=np.float32)
+        ground[..., 2] = 1
+        slope = np.zeros_like(ground)
+        slope[..., 0] = .8
+        slope[..., 2] = .6
+        albedo = np.full_like(ground, .4)
+        land = np.zeros(shape[:2], dtype=np.float32)
+        sun = np.array([.866, 0, -.5], dtype=np.float32)
+        flat, _ = _surface_radiance(albedo, land, ground, ground, ground, sun, apple_night=True)
+        tilted, _ = _surface_radiance(albedo, land, slope, ground, ground, sun, apple_night=True)
+        np.testing.assert_allclose(tilted, flat)
+
     def test_cloud_opacity_does_not_disappear_at_sunset(self):
         alpha = np.full((16, 16), .85, dtype=np.float32)
         structure = np.full_like(alpha, .7)
