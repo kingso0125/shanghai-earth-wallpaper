@@ -19,9 +19,8 @@ jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -48,11 +47,51 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: public
+      - name: Keep public-repository schedule active
+        if: github.event_name == 'schedule'
+        run: |
+          if [[ "$(date -u '+%d %H')" != "01 00" ]]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date -u '+%FT%TZ' > .github/schedule-heartbeat
+          git add .github/schedule-heartbeat
+          git commit -m "chore keep hourly schedule active [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+
+  deploy:
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    permissions:
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Wait for the uploaded archive to be readable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.render.outputs.artifact_id }}
+        run: |
+          for delay in 3 6 12 24 30; do
+            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/pages.zip" &&
+               unzip -tqq "$RUNNER_TEMP/pages.zip"; then
+              exit 0
+            fi
+            sleep "$delay"
+          done
+          exit 1
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/github-script@v9
         env:
-          PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+          PAGES_ARTIFACT_ID: ${{ needs.render.outputs.artifact_id }}
         with:
           script: |
             const artifact = Number(process.env.PAGES_ARTIFACT_ID)
@@ -72,16 +111,3 @@ jobs:
                    'failed', 'cancelled'].includes(data.status)) throw new Error(data.status)
             }
             throw new Error('Timed out waiting for Pages deployment')
-      - name: Keep public-repository schedule active
-        if: github.event_name == 'schedule'
-        run: |
-          if [[ "$(date -u '+%d %H')" != "01 00" ]]; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          date -u '+%FT%TZ' > .github/schedule-heartbeat
-          git add .github/schedule-heartbeat
-          git commit -m "chore keep hourly schedule active [skip ci]"
-          git pull --rebase origin main
-          git push origin HEAD:main
