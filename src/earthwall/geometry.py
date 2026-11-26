@@ -147,6 +147,36 @@ def sample_geostationary_focus_plate(
     return top * (1.0 - blend_y) + bottom * blend_y, valid
 
 
+def sample_cira_geocolor(image, latitude, longitude, satellite_longitude):
+    """Sample the CIRA Himawari/GK2A full disk at the terrain's geodetic coordinates.
+
+    SLIDER full_disk lat_lon_query specifies the zoom-0 radii on a 688 px tile.
+    Invert its scan-to-geodetic equations; both instruments use a y-sweep grid.
+    """
+    equator, polar, distance = 6378.1, 6356.8, 42171.7
+    axis_ratio = (polar / equator) ** 2
+    sin_lat, cos_lat = np.sin(latitude), np.cos(latitude)
+    delta = longitude - np.float32(np.deg2rad(satellite_longitude))
+    radius = equator / np.sqrt(1 - (1 - axis_ratio) * sin_lat**2)
+    toward = distance - radius * cos_lat * np.cos(delta)
+    east = radius * cos_lat * np.sin(delta)
+    north = radius * axis_ratio * sin_lat
+    scan_x = np.arctan2(east, toward)
+    scan_y = np.arctan2(north, np.hypot(toward, east))
+    height, width = image.shape[:2]
+    xf = (width - 1) / 2 + scan_x * (width / 688 * 337 / .150618)
+    yf = (height - 1) / 2 - scan_y * (height / 688 * 336 / .150485)
+    # The satellite must be above the local ellipsoid horizon. The far side
+    # also maps to in-bounds pixels, so rectangular bounds alone are insufficient.
+    horizon = cos_lat * np.cos(delta) - equator**2 / (radius * distance)
+    valid = (horizon > 0) & (xf >= 0) & (xf < width - 1) & (yf >= 0) & (yf < height - 1)
+    # GeoColor is strongly limb-brightened. Fade the last few scan rows
+    # continuously instead of cutting a bright crescent into the basemap.
+    zenith_cos = horizon * distance / np.sqrt(toward**2 + east**2 + north**2)
+    t = np.clip((zenith_cos - .035) / .24, 0, 1)
+    return _sample_disk_pixels(image, xf, yf), valid * t**2 * (3 - 2 * t)
+
+
 def sample_geostationary_disk(
     image: np.ndarray, surface_vectors: np.ndarray, satellite_longitude: float
 ):
@@ -171,6 +201,11 @@ def sample_geostationary_disk(
     xf = width / 2.0 + scan_x / max_scan * radius
     yf = height / 2.0 - scan_y / max_scan * radius
     valid = (front > horizon) & (xf >= 0) & (xf < width - 1) & (yf >= 0) & (yf < height - 1)
+    return _sample_disk_pixels(image, xf, yf), valid, front
+
+
+def _sample_disk_pixels(image, xf, yf):
+    height, width = image.shape[:2]
     xf = np.clip(xf, 0, width - 1.001)
     yf = np.clip(yf, 0, height - 1.001)
     x0 = np.floor(xf).astype(np.int32)
@@ -182,4 +217,4 @@ def sample_geostationary_disk(
     top = image[y0, x0] * (1.0 - wx) + image[y0, x1] * wx
     bottom = image[y1, x0] * (1.0 - wx) + image[y1, x1] * wx
     sampled = top * (1.0 - wy) + bottom * wy
-    return sampled, valid, front
+    return sampled

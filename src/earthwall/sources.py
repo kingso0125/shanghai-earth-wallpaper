@@ -285,8 +285,8 @@ CIRA_DATA = (
     "data_location_01"
 )
 CIRA_SOURCES = (
-    ("himawari", "CIRA SLIDER / JMA Himawari-9", 140.7),
-    ("gk2a", "CIRA SLIDER / KMA GK2A", 128.2),
+    ("himawari", "CIRA SLIDER / JMA Himawari-9", 140.69),
+    ("gk2a", "CIRA SLIDER / KMA GK2A", 128.0),
 )
 EUMETSAT_CAPABILITIES = (
     "https://view.eumetsat.int/geoserver/wms?"
@@ -500,7 +500,7 @@ def acquire(cache: Path) -> Observation:
                 lights,
                 "cached",
                 f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
-                128.2 if satellite == "gk2a" else 140.7,
+                128.0 if satellite == "gk2a" else 140.69,
                 terrain,
             )
 
@@ -518,7 +518,7 @@ def acquire(cache: Path) -> Observation:
     return Observation(
         timestamp, geocolor, geocolor, geocolor, base, lights, "cached",
         f"CIRA SLIDER / {'KMA GK2A' if satellite == 'gk2a' else 'JMA Himawari-9'} (cached)",
-        128.2 if satellite == "gk2a" else 140.7,
+        128.0 if satellite == "gk2a" else 140.69,
         terrain,
     )
 

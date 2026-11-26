@@ -9,13 +9,12 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 from .config import SHANGHAI
-from .geometry import sample_equirectangular, sample_geostationary_focus_plate
+from .geometry import sample_equirectangular, sample_cira_geocolor
 from .lighting import sun_vector
 from .render import (
     ACKNOWLEDGEMENT,
     _city_light_signal,
     _cloud_alpha,
-    _day_cloud_alpha,
     _night_cloud_alpha,
     _thermal_cloud_texture,
 )
@@ -525,6 +524,30 @@ def cloud_material(
     return CloudProperties(opacity.astype(np.float32), radiance.astype(np.float32))
 
 
+def _geocolor_clouds(satellite, base, source_day, coverage, thermal=None,
+                     thermal_coverage=None, height_meters=None):
+    # GeoColor already stretches twilight and brightens the limb. Convert its
+    # neutral component to a daylight signal before estimating optical depth.
+    white = satellite[..., :3].min(axis=-1)
+    background = .065 + .85 * base[..., :3].min(axis=-1)
+    signal = np.clip((white - background) / (1 - background), 0, 1)
+    signal = signal**1.65 * (.45 + .55 * np.sqrt(source_day))
+    day_alpha = .94 * signal
+    day_texture = .80 * signal + .20 * _blur_scalar(signal, .65)
+    day = smoothstep(.07, .46, source_day)
+    if thermal is None:
+        # At low sun GeoColor can show haze and snow as nearly neutral white.
+        night_alpha = .65 * _night_cloud_alpha(satellite, np.zeros_like(source_day))
+        night_texture = white * .72
+    else:
+        night_alpha, night_texture = _apple_night_ir_cloud(
+            satellite, base, thermal=thermal, height_meters=height_meters
+        )
+        night_alpha *= thermal_coverage
+    texture = day_texture * day + night_texture * (1 - day)
+    return coverage * (day_alpha * day + night_alpha * (1 - day)), texture
+
+
 def _projected_sun(preset: V2Preset, sun: np.ndarray) -> tuple[float, float]:
     _forward, east, north = _basis(preset.target_lat, preset.target_lon)
     x = float(np.dot(sun, east))
@@ -744,7 +767,6 @@ def _render_region(
     # Apparent altitude belongs in shading/edge softness, not a larger sphere:
     # a larger sphere shifts coastlines and becomes obvious in the full-globe
     # Lock composition.
-    cloud_preset = preset
     cloud_lat, cloud_lon, cloud_visible, cloud_vectors = lat, lon, visible, vectors
     base = _sample_map(observation.base, lat, lon)
     cloud_base = base
@@ -857,15 +879,23 @@ def _render_region(
         if apple_night:
             del night_alpha, night_weight
     else:
-        geocolor = _load(observation.geocolor)
-        satellite, valid = sample_geostationary_focus_plate(
-            geocolor, cloud_preset, observation.satellite_longitude
+        with Image.open(observation.geocolor) as image:
+            disk = np.asarray(image.convert("RGB"))
+        satellite, coverage = sample_cira_geocolor(
+            disk, cloud_lat, cloud_lon, observation.satellite_longitude
         )
-        day = np.clip(cloud_solar_cos, 0.0, 1.0)
-        cloud_alpha = np.maximum(_day_cloud_alpha(satellite, day), _night_cloud_alpha(satellite, day))
-        cloud_alpha *= valid * cloud_visible
-        cloud_texture = np.clip(satellite[..., :3].mean(axis=-1), 0.0, 1.0)
-        del geocolor, satellite, valid, day
+        del disk
+        satellite /= 255
+        thermal = thermal_coverage = None
+        if observation.brightness_temperature:
+            thermal, thermal_coverage = sample_temperature(
+                observation.brightness_temperature, cloud_lat, cloud_lon
+            )
+        cloud_alpha, cloud_texture = _geocolor_clouds(
+            satellite, cloud_base, source_day, coverage * cloud_visible,
+            thermal, thermal_coverage, height_meters
+        )
+        del satellite, coverage, thermal, thermal_coverage
 
     del base, cloud_base, source_day, height_meters
     lights = _sample_map(observation.lights, lat, lon)
@@ -1072,16 +1102,18 @@ def _production_manifest(
     manifest = {
         "profile": profile,
         "renderer": "cinematic-earth-v2",
-        "style": "astronomy-relief-v28",
-        "cloud_material": "observed-volume-r5",
+        "style": "astronomy-relief-v29",
+        "cloud_material": "geolocated-geocolor-r1" if observation.geocolor else "observed-volume-r5",
         "night_palette": "saturated-blue-r2",
         "night_cloud_input": {
             "source": "JMA Himawari-9 calibrated HSD Band 13 / NOAA archive"
-                if observation.brightness_temperature else "browse image fallback",
+                if observation.brightness_temperature else (
+                    "CIRA GeoColor composite" if observation.geocolor else "browse image fallback"),
             "calibrated_temperature": observation.brightness_temperature is not None,
             "asset_sha256": sha256(observation.brightness_temperature)
                 if observation.brightness_temperature else None,
-            "interpretation": "temperature-derived appearance; not measured optical depth or cloud height",
+            "interpretation": ("composite-derived appearance" if observation.geocolor and not observation.brightness_temperature else
+                               "temperature-derived appearance; not measured optical depth or cloud height"),
         },
         "preview_only": False,
         "observation_utc": observation.timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z"),

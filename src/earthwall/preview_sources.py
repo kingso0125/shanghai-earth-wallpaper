@@ -81,8 +81,25 @@ def upgrade_v2_observation(cache: Path, observation: Observation, *, require_cal
     water_mask = _download("MODIS_Water_Mask", None, v2_cache / "water-mask-8k.png")
     observation = replace(observation, water_mask=water_mask,
                           elevation=ELEVATION if ELEVATION.exists() else None)
+    temperature = None
+    primary_himawari = (
+        observation.source.startswith("NASA GIBS / JMA") and observation.infrared_layer == IR_LAYER
+    )
+    cira_himawari = (
+        observation.geocolor is not None and observation.source.startswith("CIRA SLIDER / JMA Himawari-9")
+    )
+    if primary_himawari or cira_himawari:
+        try:
+            temperature = acquire_temperature(v2_cache, observation.timestamp)
+        except (OSError, ValueError, EOFError) as error:
+            # Keep the paired, same-instant browse observation if the raw
+            # archive is unavailable; the manifest identifies this fallback.
+            logging.getLogger(__name__).warning("Himawari temperature unavailable at %s: %s", observation.timestamp, error)
+            if require_calibrated and primary_himawari:
+                raise OSError("calibrated cloud data unavailable; keep the last verified wallpaper") from error
     if observation.geocolor is not None or observation.source.startswith("EUMETSAT"):
-        return replace(observation, base=base, lights=lights, terrain=terrain)
+        return replace(observation, base=base, lights=lights, terrain=terrain,
+                       brightness_temperature=temperature)
 
     stamp = observation.timestamp.astimezone(UTC).strftime("%Y%m%dT%H%MZ")
     prefix = observation.visible.name.split(stamp)[0].rstrip("-")
@@ -101,16 +118,6 @@ def upgrade_v2_observation(cache: Path, observation: Observation, *, require_cal
         if not all(_valid_cloud_image(p) for p in (observation.visible, observation.infrared)):
             raise
         visible, infrared = observation.visible, observation.infrared
-    temperature = None
-    if observation.source.startswith("NASA GIBS / JMA") and observation.infrared_layer == IR_LAYER:
-        try:
-            temperature = acquire_temperature(v2_cache, observation.timestamp)
-        except (OSError, ValueError, EOFError) as error:
-            # Keep the paired, same-instant browse observation if the raw
-            # archive is unavailable; the manifest identifies this fallback.
-            logging.getLogger(__name__).warning("Himawari temperature unavailable at %s: %s", observation.timestamp, error)
-            if require_calibrated:
-                raise OSError("calibrated cloud data unavailable; keep the last verified wallpaper") from error
     return replace(
         observation,
         visible=visible,
