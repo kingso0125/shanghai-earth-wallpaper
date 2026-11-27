@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from earthwall.thermal import coldness, sample_coldness
 from earthwall.geometry import sample_equirectangular
-from earthwall.preview_v2 import cloud_material, _apple_night_ir_cloud, _cloud_layer, _cloud_volume_shading, _surface_radiance, V2_LOCK
+from earthwall.preview_v2 import cloud_material, _apple_night_ir_cloud, _cloud_layer, _cloud_volume_shading, _surface_radiance, V2_LOCK, V2_HOME
 from earthwall.render import _city_light_signal
 
 
@@ -115,6 +115,26 @@ class ReferenceMaterialTests(unittest.TestCase):
         np.testing.assert_array_equal(left, right)
         self.assertGreater(float(left[32, 32]), 1.10)
         self.assertLess(float(left.min()), .99)
+
+    def test_home_limb_softens_clouds_and_keeps_dense_banks_over_lights(self):
+        shape = (48, 80)
+        surface = np.full((*shape, 3), .012, dtype=np.float32)
+        alpha = np.zeros(shape, dtype=np.float32)
+        alpha[:, 16:64] = .95
+        texture = np.ones_like(alpha) * .85
+        sun = np.array([1, 0, 0], dtype=np.float32)
+        for solar_cos in (-.8, .8):
+            def render(view_cos, emission=None):
+                return _cloud_layer(surface, alpha, texture, np.full_like(alpha, solar_cos),
+                                    np.full_like(alpha, view_cos), sun, V2_HOME, apple_night=True,
+                                    city_emission=emission)
+
+            far, near = render(.23), render(.85)
+            np.testing.assert_array_equal(far[:, :16], surface[:, :16])
+            self.assertLess(far[24, 40].mean(), near[24, 40].mean() * .75)
+            transmitted = render(.23, np.ones_like(surface)) - far
+            self.assertLess(transmitted[24, 40].max(), .08)
+            self.assertGreater(transmitted[24, 0].min(), .99)
 
     def test_cloud_top_does_not_copy_city_emission(self):
         shape = (16, 16)

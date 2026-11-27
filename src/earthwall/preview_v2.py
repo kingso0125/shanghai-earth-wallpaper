@@ -602,6 +602,18 @@ def _cloud_layer(
 ) -> np.ndarray:
     sun_x, sun_y = _projected_sun(preset, sun)
     observed = np.clip(cloud_texture, 0.0, 1.0)
+    oblique = apple_night and preset.focus_offset != (0.0, 0.0)
+    if oblique:
+        # At a grazing angle each pixel samples a wider patch of the cloud bank.
+        # Filter the observed colour with coverage so bare terrain cannot tint it.
+        distance_fade = 1.0 - smoothstep(.10, .72, view_cos)
+        radius = max(1.0, preset.globe_radius_px * .0036)
+        density = _blur_scalar(cloud_alpha, radius)
+        bank_texture = _blur_scalar(cloud_alpha * observed, radius) / np.maximum(density, 1e-5)
+        weight = .16 + .70 * distance_fade
+        observed += (bank_texture - observed) * weight
+        cloud_alpha = np.minimum(cloud_alpha * 1.2, cloud_alpha + weight * (density - cloud_alpha))
+        del density, bank_texture, weight
     soft = _blur_scalar(cloud_alpha * (0.55 + observed * 0.45), 1.8)
     # The stylised night profile keeps cloud shadows directly beneath the
     # observed cloud footprint. A screen-space offset creates a visible double
@@ -640,11 +652,10 @@ def _cloud_layer(
             0.0,
             0.99,
         )
-        if preset.focus_offset != (0.0, 0.0):
-            # Oblique rays travel farther through a bank. Bound the path near
-            # the horizon so mist stays translucent and clear pixels stay clear.
-            path_length = 1.0 / np.maximum(view_cos, 0.55)
-            cloud_opacity = 1.0 - (1.0 - cloud_opacity) ** path_length
+        if oblique:
+            # The shell term above already thickens the grazing path. A second
+            # full slant-depth correction turns thin banks into opaque stripes.
+            cloud_opacity *= 1.0 - .36 * distance_fade * (1.0 - cloud_opacity)
         cloud_opacity *= cloud_alpha > 0
         limb_skylight = (
             limb * density * cloud_night
@@ -652,6 +663,13 @@ def _cloud_layer(
         cloud_radiance = material.radiance * _cloud_volume_shading(
             observed, daylight, view_cos, sun_x, sun_y, detail_scale,
         )[..., None] + limb_skylight
+        if oblique:
+            # Veiling light acts on cloud contrast separately from opacity:
+            # a distant bank can stay dense while its sunlit crest grows dimmer.
+            sky_night = np.array([.008, .016, .032], dtype=np.float32)
+            sky_day = np.array([.050, .064, .080], dtype=np.float32)
+            airlight = sky_night + daylight[..., None] * (sky_day - sky_night)
+            cloud_radiance += (airlight - cloud_radiance) * (.83 * distance_fade)[..., None]
     composite = (
         surface * (1.0 - cloud_opacity[..., None])
         + cloud_radiance * cloud_opacity[..., None]
@@ -1243,6 +1261,7 @@ def render_production_pair(
             },
         }
     artifacts["home"]["composition"] = "earth-detail-reference"
+    artifacts["home"]["cloud_limb"] = "observed-aerial-perspective-v1"
     manifest = _production_manifest(
         observation,
         artifacts,
