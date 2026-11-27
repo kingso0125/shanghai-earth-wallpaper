@@ -116,6 +116,23 @@ class ReferenceMaterialTests(unittest.TestCase):
         self.assertGreater(float(left[32, 32]), 1.10)
         self.assertLess(float(left.min()), .99)
 
+    def test_home_transmits_surface_through_medium_clouds_and_retains_dense_cores(self):
+        # A common browse alpha can represent either a veil or a bright core.
+        def material(coverage, texture, home):
+            alpha = np.full((24, 24), coverage, dtype=np.float32)
+            return cloud_material(alpha, np.full_like(alpha, texture), np.ones_like(alpha),
+                                  apple_night=True, oblique_home=home)
+
+        medium = material(.55, .50, True)
+        previous = material(.55, .50, False)
+        self.assertGreater(1.0 - medium.opacity.mean(), .60)
+        self.assertLess(medium.radiance.mean(), previous.radiance.mean() * .80)
+        dim_bank = material(.92, .50, True)
+        bright_core = material(.92, .88, True)
+        self.assertGreater(bright_core.opacity.mean(), .95)
+        self.assertGreater(bright_core.opacity.mean() - dim_bank.opacity.mean(), .1)
+        self.assertEqual(material(0., .75, True).opacity.max(), 0.)
+
     def test_home_limb_softens_clouds_and_keeps_dense_banks_over_lights(self):
         shape = (48, 80)
         surface = np.full((*shape, 3), .012, dtype=np.float32)

@@ -493,6 +493,7 @@ def cloud_material(
     *,
     apple_night: bool = False,
     detail_scale: float = 1.0,
+    oblique_home: bool = False,
 ) -> CloudProperties:
     """Build a display-calibrated cloud material from real satellite fields.
 
@@ -513,11 +514,20 @@ def cloud_material(
         # Increase the optical path of medium/thick bodies, not their extent.
         # Thin cirrus remains translucent; dense cores hide the terrain/lights.
         body = smoothstep(0.22, 0.85, alpha)
-        opacity = 1.0 - np.exp(-optical_depth * (0.52 + structure * 0.48 + body * 0.95))
+        if oblique_home:
+            # Browse coverage saturates early. Require texture evidence as well
+            # as coverage before making a whole cloud bank optically thick.
+            core = smoothstep(.54, .90, alpha) * smoothstep(.36, .80, structure)
+            depth_scale = .35 + .24 * structure + 1.10 * core
+        else:
+            depth_scale = .52 + .48 * structure + .95 * body
+        opacity = 1.0 - np.exp(-optical_depth * depth_scale)
         opacity = opacity * 0.88 + _blur_scalar(opacity, 0.5 * detail_scale) * 0.12
         opacity *= alpha > 0
         day = smoothstep(-0.10, 0.30, solar_cos)
         reflectance = 0.32 + np.power(structure, 0.90) * 0.54
+        if oblique_home:
+            reflectance *= .78 + .10 * core
         day_radiance = _linear(reflectance[..., None] * np.array([1.0, 0.995, 0.985], dtype=np.float32))
         day_radiance *= (0.30 + np.power(np.clip(solar_cos, 0, 1), 0.6) * 0.70)[..., None]
         # Cool shadow, silver-blue crest. Ease into the highlight so an
@@ -630,7 +640,7 @@ def _cloud_layer(
     detail_scale = float(np.clip(preset.globe_radius_px / V2_LOCK.globe_radius_px, 0.5, 2.5))
     material = cloud_material(
         cloud_alpha, observed, solar_cos, apple_night=apple_night,
-        detail_scale=detail_scale,
+        detail_scale=detail_scale, oblique_home=oblique,
     )
     cloud_radiance = material.radiance
     cloud_opacity = material.opacity
@@ -1262,6 +1272,7 @@ def render_production_pair(
         }
     artifacts["home"]["composition"] = "earth-detail-reference"
     artifacts["home"]["cloud_limb"] = "observed-aerial-perspective-v1"
+    artifacts["home"]["cloud_material"] = "translucent-banks-v2"
     manifest = _production_manifest(
         observation,
         artifacts,
