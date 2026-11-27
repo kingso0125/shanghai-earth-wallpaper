@@ -51,12 +51,13 @@ V2_LOCK = V2Preset(
 V2_HOME = V2Preset(
     "home",
     (1320, 2868),
-    (2100.0, 3700.0),
-    3250.0,
-    5.2,
+    # Orbit fitted to the horizon and East Asian coastlines in the reference.
+    (1342.0, 2139.0),
+    1585.0,
+    2.668,
     *SHANGHAI,
-    focus_offset=((660 - 2100) / 3250, (1434 - 3700) / 3250),
-    heading_deg=16.0,
+    focus_offset=((754 - 1342) / 1585, (1805 - 2139) / 1585),
+    heading_deg=-7.25,
 )
 V2_MAC_LOCK = V2Preset(
     "lock",
@@ -797,6 +798,7 @@ def _render_region(
     apple_night: bool = False,
     background_srgb: np.ndarray | None = None,
     atmosphere_size: tuple[int, int] | None = None,
+    crop_top: int = 0,
 ) -> Image.Image:
     lat, lon, visible, view_cos, vectors, view = perspective_camera_grid(preset)
     # Clouds and terrain must share the exact same geographic projection.
@@ -834,6 +836,12 @@ def _render_region(
         sun,
         apple_night=apple_night,
     )
+    if preset.focus_offset != (0.0, 0.0):
+        # Diffuse skylight lifts shaded valleys and the green channel in
+        # coastal water before clouds attenuate the surface underneath.
+        sky_fill = smoothstep(0.0, 0.35, solar_cos)
+        earth += (sky_fill * land)[..., None] * np.array([.020, .023, .015], dtype=np.float32)
+        earth += (sky_fill * ocean)[..., None] * np.array([.009, .019, .002], dtype=np.float32)
     if height_meters is not None:
         # Read both the mountain range and its smaller drainage valleys.
         # Relative elevation leaves a level plateau and open sea unembossed.
@@ -1001,6 +1009,13 @@ def _render_region(
         halo_strength = 0.17
         halo_color = atmosphere_color
     earth += rim[..., None] * atmosphere_tone * np.asarray(rim_strength)[..., None]
+    if preset.focus_offset != (0.0, 0.0):
+        # Roll the distant surface into space instead of a bright icy rim.
+        earth *= (.20 + .80 * smoothstep(.015, .46, view_cos))[..., None]
+        frame_height = (atmosphere_size or preset.size)[1]
+        frame_y = (crop_top + np.arange(preset.size[1], dtype=np.float32)) / frame_height
+        earth *= (.16 + .84 * smoothstep(.20, .49, frame_y))[:, None, None]
+        halo_strength *= .40
     edge_alpha = _edge_alpha(preset)
 
     if background_srgb is None:
@@ -1065,7 +1080,7 @@ def render_preview_one(
     rendered = _render_region(
         observation, region, destination, lighting_time=lighting_time,
         apple_night=apple_night, background_srgb=background_crop,
-        atmosphere_size=preset.size,
+        atmosphere_size=preset.size, crop_top=top,
     )
     image.paste(rendered, (left, top))
     if output_size is not None and image.size != output_size:
@@ -1227,7 +1242,7 @@ def render_production_pair(
                 "longitude": float(preset.target_lon),
             },
         }
-    artifacts["home"]["composition"] = "oblique-city-centered"
+    artifacts["home"]["composition"] = "earth-detail-reference"
     manifest = _production_manifest(
         observation,
         artifacts,

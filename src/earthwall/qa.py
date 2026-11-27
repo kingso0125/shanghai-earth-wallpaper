@@ -63,7 +63,11 @@ def audit(directory: Path) -> dict:
     lock, home = preset_factory(
         float(target.get("latitude", 31.2304)), float(target.get("longitude", 121.4737))
     )
-    if is_v2 and "composition" not in manifest.get("artifacts", {}).get("home", {}):
+    composition = manifest.get("artifacts", {}).get("home", {}).get("composition")
+    if is_v2 and composition == "oblique-city-centered":
+        home = replace(home, center_px=(2100, 3700), globe_radius_px=3250, camera_distance=5.2,
+                       focus_offset=((660 - 2100) / 3250, (1434 - 3700) / 3250), heading_deg=16.)
+    elif is_v2 and composition is None:
         # Archived phone pairs used a symmetric, meridian-centered close-up.
         center = manifest.get("view_center", {}).get("home", {})
         home = replace(home, center_px=(660, 2735), globe_radius_px=1510, camera_distance=2.75,

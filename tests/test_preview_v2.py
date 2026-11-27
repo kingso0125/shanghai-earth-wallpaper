@@ -56,13 +56,16 @@ class PreviewV2Tests(unittest.TestCase):
                 cx, cy = home.center_px
                 return perspective_camera_grid(replace(home, size=(1, 1), center_px=(cx-x, cy-y)))
 
-            lat, lon, visible, *_ = sample(home.size[0] // 2, home.size[1] // 2)
+            lat, lon, visible, *_ = sample(754, 1805)
             self.assertTrue(visible.item())
             self.assertAlmostEqual(np.rad2deg(lat.item()), latitude, places=3)
             self.assertAlmostEqual(np.rad2deg(lon.item()), longitude, places=3)
             self.assertFalse(sample(0, 1000)[2].item())
             self.assertTrue(sample(1319, 1000)[2].item())
-            self.assertFalse(sample(1319, 470)[2].item())
+            # Sample both sides of the measured limb at the left, middle and right.
+            for x, horizon in ((10, 1276), (560, 755), (1310, 555)):
+                self.assertFalse(sample(x, horizon - 17)[2].item())
+                self.assertTrue(sample(x, horizon + 17)[2].item())
 
     def test_filmic_curve_preserves_highlight_order(self) -> None:
         values = np.array([0.25, 1.0, 4.0], dtype=np.float32)
