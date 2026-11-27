@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 import unittest
 
 import numpy as np
@@ -18,6 +19,7 @@ from earthwall.preview_v2 import (
     cloud_optical_properties,
     perspective_camera_grid,
     presets_for_mac_location,
+    presets_for_location,
     preview_output,
 )
 
@@ -45,6 +47,22 @@ class PreviewV2Tests(unittest.TestCase):
         self.assertAlmostEqual(float(view_cos[y, x]), 1.0, places=4)
         self.assertAlmostEqual(float(np.rad2deg(lat[y, x])), V2_LOCK.target_lat, places=2)
         self.assertAlmostEqual(float(np.rad2deg(lon[y, x])), V2_LOCK.target_lon, places=2)
+
+    def test_phone_home_focus_and_diagonal_horizon(self) -> None:
+        for latitude, longitude in ((31.2304, 121.4737), (85.0, -179.8), (-44.0, 179.9)):
+            _, home = presets_for_location(latitude, longitude)
+            # A one-pixel crop exercises the same grid as native rendering.
+            def sample(x, y):
+                cx, cy = home.center_px
+                return perspective_camera_grid(replace(home, size=(1, 1), center_px=(cx-x, cy-y)))
+
+            lat, lon, visible, *_ = sample(home.size[0] // 2, home.size[1] // 2)
+            self.assertTrue(visible.item())
+            self.assertAlmostEqual(np.rad2deg(lat.item()), latitude, places=3)
+            self.assertAlmostEqual(np.rad2deg(lon.item()), longitude, places=3)
+            self.assertFalse(sample(0, 1000)[2].item())
+            self.assertTrue(sample(1319, 1000)[2].item())
+            self.assertFalse(sample(1319, 470)[2].item())
 
     def test_filmic_curve_preserves_highlight_order(self) -> None:
         values = np.array([0.25, 1.0, 4.0], dtype=np.float32)

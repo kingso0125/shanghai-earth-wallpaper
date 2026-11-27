@@ -34,6 +34,9 @@ class V2Preset:
     camera_distance: float
     target_lat: float
     target_lon: float
+    # Target offset from the projected globe center, in radii (right, down).
+    focus_offset: tuple[float, float] = (0.0, 0.0)
+    heading_deg: float = 0.0
 
 
 V2_LOCK = V2Preset(
@@ -48,11 +51,12 @@ V2_LOCK = V2Preset(
 V2_HOME = V2Preset(
     "home",
     (1320, 2868),
-    (660.0, 2735.0),
-    1510.0,
-    2.75,
-    5.0,
-    SHANGHAI[1],
+    (2100.0, 3700.0),
+    3250.0,
+    5.2,
+    *SHANGHAI,
+    focus_offset=((660 - 2100) / 3250, (1434 - 3700) / 3250),
+    heading_deg=16.0,
 )
 V2_MAC_LOCK = V2Preset(
     "lock",
@@ -87,7 +91,7 @@ def preview_output(name: str) -> Path:
 def presets_for_location(latitude: float, longitude: float) -> tuple[V2Preset, ...]:
     return (
         replace(V2_LOCK, target_lat=np.clip(latitude - 6.0, -90.0, 90.0), target_lon=longitude),
-        replace(V2_HOME, target_lat=float(np.clip(latitude - SHANGHAI[0] + 5.0, -80.0, 80.0)), target_lon=longitude),
+        replace(V2_HOME, target_lat=latitude, target_lon=longitude),
     )
 
 
@@ -111,6 +115,33 @@ def _basis(latitude: float, longitude: float) -> tuple[np.ndarray, ...]:
         dtype=np.float32,
     )
     return forward, east, north
+
+
+def _camera_basis(preset: V2Preset) -> tuple[np.ndarray, ...]:
+    forward, east, north = _basis(preset.target_lat, preset.target_lon)
+    if preset.focus_offset == (0.0, 0.0):
+        return forward, east, north
+
+    # Intersect the ray through the screen focus with the unit Earth. Align
+    # that surface point and its tangent east with the requested city and east.
+    x, y = preset.focus_offset
+    distance = preset.camera_distance
+    ray = np.array([x, -y, -np.sqrt(distance**2 - 1)])
+    ray /= np.linalg.norm(ray)
+    along = -distance * ray[2]
+    focus = ray * (along - np.sqrt(along**2 - distance**2 + 1))
+    focus[2] += distance
+    local_east = np.array([focus[2], 0.0, -focus[0]])
+    local_east /= np.linalg.norm(local_east)
+    local_north = np.cross(focus, local_east)
+    angle = np.deg2rad(preset.heading_deg)
+    local_east, local_north = (
+        np.cos(angle) * local_east + np.sin(angle) * local_north,
+        -np.sin(angle) * local_east + np.cos(angle) * local_north,
+    )
+    rotation = np.outer(east, local_east) + np.outer(north, local_north) + np.outer(forward, focus)
+    right, up, outward = rotation.astype(np.float32).T
+    return outward, right, up
 
 
 def perspective_camera_grid(preset: V2Preset):
@@ -142,7 +173,7 @@ def perspective_camera_grid(preset: V2Preset):
     normal_local = point - np.array([0.0, 0.0, distance], dtype=np.float32)
     normal_local /= np.maximum(np.linalg.norm(normal_local, axis=-1, keepdims=True), 1e-6)
 
-    forward, east, north = _basis(preset.target_lat, preset.target_lon)
+    forward, east, north = _camera_basis(preset)
     vectors = (
         normal_local[..., 0, None] * east
         + normal_local[..., 1, None] * north
@@ -370,7 +401,7 @@ def _relief_normals(
     broad = _blur_scalar(gray, 11.0)
     height = np.clip(gray - broad, -0.16, 0.16)
     gradient_y, gradient_x = np.gradient(height)
-    forward, east, north = _basis(preset.target_lat, preset.target_lon)
+    forward, east, north = _camera_basis(preset)
     # This is a shaded-relief image, not measured elevation. Keep its normal
     # perturbation restrained so map palette/tile edges cannot become mountains.
     strength = 9.0 * land * smoothstep(0.18, 0.88, np.abs(height) + 0.12)
@@ -549,7 +580,7 @@ def _geocolor_clouds(satellite, base, source_day, coverage, thermal=None,
 
 
 def _projected_sun(preset: V2Preset, sun: np.ndarray) -> tuple[float, float]:
-    _forward, east, north = _basis(preset.target_lat, preset.target_lon)
+    _forward, east, north = _camera_basis(preset)
     x = float(np.dot(sun, east))
     y = float(-np.dot(sun, north))
     length = max(np.hypot(x, y), 1e-6)
@@ -608,6 +639,11 @@ def _cloud_layer(
             0.0,
             0.99,
         )
+        if preset.focus_offset != (0.0, 0.0):
+            # Oblique rays travel farther through a bank. Bound the path near
+            # the horizon so mist stays translucent and clear pixels stay clear.
+            path_length = 1.0 / np.maximum(view_cos, 0.55)
+            cloud_opacity = 1.0 - (1.0 - cloud_opacity) ** path_length
         cloud_opacity *= cloud_alpha > 0
         limb_skylight = (
             limb * density * cloud_night
@@ -1191,6 +1227,7 @@ def render_production_pair(
                 "longitude": float(preset.target_lon),
             },
         }
+    artifacts["home"]["composition"] = "oblique-city-centered"
     manifest = _production_manifest(
         observation,
         artifacts,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -62,6 +63,12 @@ def audit(directory: Path) -> dict:
     lock, home = preset_factory(
         float(target.get("latitude", 31.2304)), float(target.get("longitude", 121.4737))
     )
+    if is_v2 and "composition" not in manifest.get("artifacts", {}).get("home", {}):
+        # Archived phone pairs used a symmetric, meridian-centered close-up.
+        center = manifest.get("view_center", {}).get("home", {})
+        home = replace(home, center_px=(660, 2735), globe_radius_px=1510, camera_distance=2.75,
+                       target_lat=center.get("latitude", float(np.clip(home.target_lat - 26.2304, -80, 80))),
+                       focus_offset=(0., 0.), heading_deg=0.)
     result = {
         "observation_age_hours": age_hours,
         "lock": _metrics(directory / "lock.jpg", lock, lighting, perspective=is_v2),
